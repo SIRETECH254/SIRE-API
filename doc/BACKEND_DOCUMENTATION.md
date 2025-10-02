@@ -833,7 +833,9 @@ sire-api/
 │   ├── config/
 │   │   ├── database.ts          # MongoDB connection
 │   │   ├── cloudinary.ts        # File upload config
+│   │   ├── swagger.ts          # Swagger documentation config
 │   │   └── payment.ts           # Payment gateway config
+│   │   
 │   ├── models/
 │   │   ├── User.ts
 │   │   ├── Client.ts
@@ -877,14 +879,30 @@ sire-api/
 │   │   ├── validate.ts          # Request validation
 │   │   ├── errorHandler.ts     # Error handling
 │   │   └── upload.ts            # File upload
+│   ├── services/
+│   │   ├── internal/
+│   │   │   ├── emailService.ts      # Internal email service
+│   │   │   ├── smsService.ts        # Internal SMS service
+│   │   │   ├── pdfService.ts        # Internal PDF generation
+│   │   │   ├── notificationService.ts # Internal notifications
+│   │   │   ├── fileService.ts       # Internal file handling
+│   │   │   └── analyticsService.ts   # Internal analytics
+│   │   └── external/
+│   │       ├── daraja.ts            # M-Pesa Daraja API
+│   │       ├── paystack.ts         # Paystack payment gateway
+│   │       ├── stripe.ts           # Stripe payment gateway
+│   │       ├── paypal.ts           # PayPal integration
+│   │       ├── africastalking.ts   # Africa's Talking SMS
+│   │       ├── cloudinary.ts       # Cloudinary file storage
+│   │       ├── nodemailer.ts      # Nodemailer email service
+│   │       └── quickbooks.ts       # QuickBooks integration
 │   ├── utils/
-│   │   ├── generatePDF.ts       # PDF generation
-│   │   ├── sendEmail.ts         # Email service
-│   │   ├── sendSMS.ts           # SMS service
+│   │   ├── generatePDF.ts       # PDF generation utilities
 │   │   ├── generateToken.ts     # JWT utilities
-│   │   ├── mpesa.ts             # M-Pesa integration
-│   │   ├── stripe.ts            # Stripe integration
-│   │   └── validators.ts        # Validation schemas
+│   │   ├── validators.ts        # Validation schemas
+│   │   ├── helpers.ts           # General helper functions
+│   │   ├── constants.ts         # Application constants
+│   │   └── logger.ts            # Logging utilities 
 │   ├── types/
 │   │   ├── express.d.ts         # Express type extensions
 │   │   └── index.ts             # Custom types
