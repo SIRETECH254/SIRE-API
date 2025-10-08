@@ -54,6 +54,43 @@ const userSchema = new Schema<IUser>({
   avatar: {
     type: String,
     default: null
+  },
+  // OTP Verification Fields
+  otpCode: {
+    type: String,
+    select: false
+  },
+  otpExpiry: {
+    type: Date,
+    select: false
+  },
+  // Password Reset Fields
+  resetPasswordToken: {
+    type: String,
+    select: false
+  },
+  resetPasswordExpiry: {
+    type: Date,
+    select: false
+  },
+  // Activity Tracking
+  lastLoginAt: {
+    type: Date
+  },
+  // Notification Preferences
+  notificationPreferences: {
+    email: {
+      type: Boolean,
+      default: true
+    },
+    sms: {
+      type: Boolean,
+      default: true
+    },
+    inApp: {
+      type: Boolean,
+      default: true
+    }
   }
 }, {
   timestamps: true // Automatically adds createdAt and updatedAt
