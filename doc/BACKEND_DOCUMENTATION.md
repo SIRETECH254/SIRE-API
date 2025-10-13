@@ -16,11 +16,7 @@
 - **Framework:** Express.js
 - **Language:** TypeScript
 - **Database:** MongoDB (Mongoose ODM)
-- **Authentication:** JWT (JSON Web Tokens)
-- **File Handling:** Multer (for file uploads)
-- **Email:** Nodemailer
-- **SMS:** Twilio / Africa's Talking
-- **Payment Gateways:** M-Pesa, Stripe, PayPal
+
 
 ---
 

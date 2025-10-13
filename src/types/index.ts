@@ -12,6 +12,20 @@ export interface IUser extends Document {
   isActive: boolean;
   emailVerified: boolean;
   avatar?: string;
+  // OTP Verification Fields
+  otpCode?: string;
+  otpExpiry?: Date;
+  // Password Reset Fields
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  // Activity Tracking
+  lastLoginAt?: Date;
+  // Notification Preferences
+  notificationPreferences?: {
+    email?: boolean;
+    sms?: boolean;
+    inApp?: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
   fullName?: string; // Virtual field

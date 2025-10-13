@@ -33,7 +33,7 @@ const userSchema = new Schema<IUser>({
     type: String,
     required: [true, 'Role is required'],
     enum: {
-      values: ['super_admin', 'finance', 'project_manager', 'staff'],
+      values: ['super_admin', 'finance', 'project_manager', 'staff', 'admin'],
       message: 'Role must be one of: super_admin, finance, project_manager, staff'
     },
     default: 'staff'
@@ -54,13 +54,49 @@ const userSchema = new Schema<IUser>({
   avatar: {
     type: String,
     default: null
+  },
+  // OTP Verification Fields
+  otpCode: {
+    type: String,
+    select: false
+  },
+  otpExpiry: {
+    type: Date,
+    select: false
+  },
+  // Password Reset Fields
+  resetPasswordToken: {
+    type: String,
+    select: false
+  },
+  resetPasswordExpiry: {
+    type: Date,
+    select: false
+  },
+  // Activity Tracking
+  lastLoginAt: {
+    type: Date
+  },
+  // Notification Preferences
+  notificationPreferences: {
+    email: {
+      type: Boolean,
+      default: true
+    },
+    sms: {
+      type: Boolean,
+      default: true
+    },
+    inApp: {
+      type: Boolean,
+      default: true
+    }
   }
 }, {
   timestamps: true // Automatically adds createdAt and updatedAt
 });
 
-// Indexes for better performance
-userSchema.index({ email: 1 });
+// Indexes for better performance (email index created automatically by unique: true)
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
 

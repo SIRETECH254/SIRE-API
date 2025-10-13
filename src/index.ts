@@ -16,12 +16,8 @@ const getAllowedOrigins = () => {
   // Default fallback origins for SIRE API
   const defaultOrigins = [
     'http://localhost:3000',
-    'http://localhost:3001', 
-    'http://localhost:5000',
     'http://localhost:5173',
-    'http://localhost:5174',
-    'https://siretech.com',
-    'https://admin.siretech.com'
+    'http://localhost:5174'
   ];
   
   if (!process.env.CORS_ORIGIN) {
@@ -36,7 +32,6 @@ const getAllowedOrigins = () => {
     return defaultOrigins;
   }
   
-  console.log('✅ CORS configured with allowed origins:', origins);
   return origins;
 };
 
@@ -74,9 +69,16 @@ mongoose.connect(process.env.MONGO_URI as string)
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// API ROUTES (will be implemented later)
-// app.use("/api/auth", authRoutes);
-// app.use("/api/users", userRoutes);
+// Import Routes
+import authRoutes from './routes/authRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+
+// API ROUTES
+app.use("/api/auth", authRoutes);
+
+app.use("/api/users", userRoutes);
+
+// TODO: Implement remaining routes
 // app.use("/api/clients", clientRoutes);
 // app.use("/api/services", serviceRoutes);
 // app.use("/api/quotations", quotationRoutes);
