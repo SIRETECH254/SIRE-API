@@ -6,7 +6,10 @@ import { errorHandler } from "../../middleware/errorHandler";
 // Send OTP via both email and SMS
 export const sendOTPNotification = async (email: string, phone: string, otp: string, name: string = "User") => {
 
-    const results = {
+    const results: {
+        email: { success: boolean; attempted: boolean; error?: string };
+        sms: { success: boolean; attempted: boolean; error?: string };
+    } = {
         email: { success: false, attempted: false },
         sms: { success: false, attempted: false }
     };
@@ -101,7 +104,10 @@ export const sendOTPNotification = async (email: string, phone: string, otp: str
 // Send password reset via both email and SMS
 export const sendPasswordResetNotification = async (email: string, phone: string, resetToken: string, name: string = "User") => {
 
-    const results = {
+    const results: {
+        email: { success: boolean; [key: string]: any };
+        sms: { success: boolean; [key: string]: any };
+    } = {
         email: { success: false },
         sms: { success: false }
     };
@@ -161,7 +167,10 @@ export const sendPasswordResetNotification = async (email: string, phone: string
 // Send welcome message via both email and SMS
 export const sendWelcomeNotification = async (email: string, phone: string, name: string) => {
 
-    const results = {
+    const results: {
+        email: { success: boolean; [key: string]: any };
+        sms: { success: boolean; [key: string]: any };
+    } = {
         email: { success: false },
         sms: { success: false }
     };

@@ -33,7 +33,7 @@ const userSchema = new Schema<IUser>({
     type: String,
     required: [true, 'Role is required'],
     enum: {
-      values: ['super_admin', 'finance', 'project_manager', 'staff'],
+      values: ['super_admin', 'finance', 'project_manager', 'staff', 'admin'],
       message: 'Role must be one of: super_admin, finance, project_manager, staff'
     },
     default: 'staff'
@@ -96,8 +96,7 @@ const userSchema = new Schema<IUser>({
   timestamps: true // Automatically adds createdAt and updatedAt
 });
 
-// Indexes for better performance
-userSchema.index({ email: 1 });
+// Indexes for better performance (email index created automatically by unique: true)
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
 

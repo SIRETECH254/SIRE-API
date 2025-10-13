@@ -32,7 +32,6 @@ const getAllowedOrigins = () => {
     return defaultOrigins;
   }
   
-  console.log('✅ CORS configured with allowed origins:', origins);
   return origins;
 };
 

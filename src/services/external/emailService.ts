@@ -12,9 +12,7 @@ const createTransporter = () => {
     }
 
     return nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+        service: 'gmail',
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
@@ -73,11 +71,17 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
             `
         };
 
-        const result = await transporter.sendMail(mailOptions);
-
-        console.log(`OTP email sent successfully to ${email}:`, result.messageId);
-
-        return { success: true, messageId: result.messageId };
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error, info) => {
+                if (error) {
+                    console.log(error);
+                    reject(errorHandler(500, `Failed to send OTP email: ${error.message}`));
+                } else {
+                    console.log("Email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
 
     } catch (error: any) {
 
@@ -152,11 +156,17 @@ export const sendPasswordResetEmail = async (email: string, resetToken: string, 
             `
         };
 
-        const result = await transporter.sendMail(mailOptions);
-
-        console.log(`Password reset email sent successfully to ${email}:`, result.messageId);
-
-        return { success: true, messageId: result.messageId };
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error, info) => {
+                if (error) {
+                    console.log(error);
+                    reject(errorHandler(500, `Failed to send password reset email: ${error.message}`));
+                } else {
+                    console.log("Email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
 
     } catch (error: any) {
 
@@ -224,11 +234,17 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
             `
         };
 
-        const result = await transporter.sendMail(mailOptions);
-
-        console.log(`Welcome email sent successfully to ${email}:`, result.messageId);
-
-        return { success: true, messageId: result.messageId };
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error, info) => {
+                if (error) {
+                    console.log(error);
+                    reject(errorHandler(500, `Failed to send welcome email: ${error.message}`));
+                } else {
+                    console.log("Email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
 
     } catch (error: any) {
 

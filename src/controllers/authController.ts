@@ -17,7 +17,7 @@ const generateTokens = (user: any): { accessToken: string; refreshToken: string 
     const accessToken = jwt.sign(
         payload,
         process.env.JWT_SECRET as string,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '15m' } as any
+        { expiresIn: process.env.JWT_EXPIRES_IN || '1d' } as any
     );
 
     const refreshToken = jwt.sign(
@@ -138,17 +138,22 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
             return next(errorHandler(400, "Email or phone is required"));
         }
 
-        // Find user by email or phone
+        // Find user by email or phone (select otpCode and otpExpiry explicitly)
         const query: any = email ? { email: email.toLowerCase() } : { phone };
-        const user = await User.findOne(query);
+        const user = await User.findOne(query).select('+otpCode +otpExpiry');
 
         if (!user) {
             return next(errorHandler(404, "User not found"));
         }
 
-        // Check if OTP is valid and not expired
-        if (user.otpCode !== otp || (user.otpExpiry && user.otpExpiry < new Date())) {
-            return next(errorHandler(400, "Invalid or expired OTP"));
+        // Check if OTP has expired
+        if (user.otpExpiry && user.otpExpiry < new Date()) {
+            return next(errorHandler(400, "OTP has expired. Please request a new one"));
+        }
+
+        // Check if OTP is correct (trim whitespace for safety)
+        if (user.otpCode !== otp.trim()) {
+            return next(errorHandler(400, "Incorrect OTP code"));
         }
 
         // Update user verification status

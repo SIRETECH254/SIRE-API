@@ -50,7 +50,7 @@ interface IUser {
   lastName: string;
   email: string;
   password: string;
-  role: 'super_admin' | 'finance' | 'project_manager' | 'staff';
+  role: 'super_admin' | 'finance' | 'project_manager' | 'staff' | 'admin';
   phone?: string;
   isActive: boolean;
   emailVerified: boolean;
@@ -249,17 +249,22 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
             return next(errorHandler(400, "Email or phone is required"))
         }
 
-        // Find user by email or phone
+        // Find user by email or phone (select otpCode and otpExpiry explicitly)
         const query = email ? { email: email.toLowerCase() } : { phone }
-        const user = await User.findOne(query)
+        const user = await User.findOne(query).select('+otpCode +otpExpiry')
 
         if (!user) {
             return next(errorHandler(404, "User not found"))
         }
 
-        // Check if OTP is valid and not expired
-        if (user.otpCode !== otp || user.otpExpiry < new Date()) {
-            return next(errorHandler(400, "Invalid or expired OTP"))
+        // Check if OTP has expired
+        if (user.otpExpiry && user.otpExpiry < new Date()) {
+            return next(errorHandler(400, "OTP has expired. Please request a new one"))
+        }
+
+        // Check if OTP is correct (trim whitespace for safety)
+        if (user.otpCode !== otp.trim()) {
+            return next(errorHandler(400, "Incorrect OTP code"))
         }
 
         // Update user verification status
@@ -1278,6 +1283,96 @@ export default router;
 }
 ```
 
+#### `POST /api/auth/logout`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+```
+
+#### `POST /api/auth/forgot-password`
+**Body:**
+```json
+{
+  "email": "admin@siretech.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password reset instructions sent to your email and phone"
+}
+```
+
+#### `POST /api/auth/reset-password/:token`
+**URL Parameter:** `token` - The reset token received via email
+
+**Body:**
+```json
+{
+  "newPassword": "newSecurePassword123"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password reset successfully"
+}
+```
+
+#### `POST /api/auth/refresh-token`
+**Body:**
+```json
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Token refreshed successfully",
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIs..."
+  }
+}
+```
+
+#### `GET /api/auth/me`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "admin@siretech.com",
+      "phone": "+254712345678",
+      "avatar": "https://cloudinary.com/...",
+      "role": "finance",
+      "isActive": true,
+      "emailVerified": true,
+      "lastLoginAt": "2025-01-01T12:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
 
 ---
 
@@ -1413,6 +1508,310 @@ export default router;
 
 ---
 
+### Route Details
+
+#### `GET /api/users`
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Items per page (default: 10)
+- `search` - Search by name or email
+- `role` - Filter by role
+- `status` - Filter by status (active, inactive, verified, unverified)
+- `sort` - Sort field
+- `order` - Sort direction (asc/desc)
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Users retrieved successfully",
+  "data": {
+    "users": [
+      {
+        "id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "admin@siretech.com",
+        "phone": "+254712345678",
+        "role": "finance",
+        "isActive": true,
+        "isVerified": true,
+        "lastLoginAt": "2025-01-01T12:00:00.000Z",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalUsers": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/users/profile`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "admin@siretech.com",
+      "phone": "+254712345678",
+      "avatar": "https://cloudinary.com/...",
+      "role": "finance",
+      "isVerified": true,
+      "isActive": true,
+      "country": "Kenya",
+      "timezone": "Africa/Nairobi",
+      "lastLoginAt": "2025-01-01T12:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/users/profile`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "firstName": "Jane",
+  "lastName": "Smith",
+  "phone": "+254712345679",
+  "avatar": "https://cloudinary.com/...",
+  "country": "Kenya",
+  "timezone": "Africa/Nairobi"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Profile updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "email": "admin@siretech.com",
+      "phone": "+254712345679",
+      "avatar": "https://cloudinary.com/...",
+      "role": "finance",
+      "country": "Kenya",
+      "timezone": "Africa/Nairobi"
+    }
+  }
+}
+```
+
+#### `PUT /api/users/change-password`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "currentPassword": "oldPassword123",
+  "newPassword": "newSecurePassword123"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+#### `GET /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notificationPreferences": {
+      "email": true,
+      "sms": true,
+      "inApp": true
+    }
+  }
+}
+```
+
+#### `PUT /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "email": false,
+  "sms": true,
+  "inApp": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification preferences updated successfully",
+  "data": {
+    "notificationPreferences": {
+      "email": false,
+      "sms": true,
+      "inApp": true
+    }
+  }
+}
+```
+
+#### `POST /api/users/admin-create`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin`, `finance`
+
+**Body:**
+```json
+{
+  "firstName": "John",
+  "lastName": "Customer",
+  "email": "customer@example.com",
+  "phone": "+254712345678",
+  "password": "securePassword123",
+  "role": "staff"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Customer created successfully",
+  "data": {
+    "userId": "...",
+    "email": "customer@example.com",
+    "phone": "+254712345678"
+  }
+}
+```
+
+#### `GET /api/users/:userId`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin`, `finance`, `project_manager`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "user@siretech.com",
+      "phone": "+254712345678",
+      "role": "staff",
+      "isActive": true,
+      "emailVerified": true,
+      "lastLoginAt": "2025-01-01T12:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/users/:userId/status`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin`
+
+**Body:**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User status updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "isActive": false
+    }
+  }
+}
+```
+
+#### `PUT /api/users/:userId/admin`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin` only
+
+**Body:**
+```json
+{
+  "role": "super_admin"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Admin status updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "role": "super_admin"
+    }
+  }
+}
+```
+
+#### `GET /api/users/:userId/roles`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin`, `finance`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "userId": "...",
+    "role": "finance"
+  }
+}
+```
+
+#### `DELETE /api/users/:userId`
+**Headers:** `Authorization: Bearer <token>`
+**Required Roles:** `super_admin` only
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User deleted successfully"
+}
+```
+
+---
+
 ## 📦 Registering Routes in Main App
 
 **File: `src/index.ts`**
@@ -1492,98 +1891,6 @@ export default app;
 
 ---
 
-### Route Details
-
-#### `GET /api/users`
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Items per page (default: 10)
-- `search` - Search by name or email
-- `role` - Filter by role
-- `status` - Filter by status (active, inactive, verified, unverified)
-- `sort` - Sort field
-- `order` - Sort direction (asc/desc)
-
-**Headers:** `Authorization: Bearer <token>`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Users retrieved successfully",
-  "data": {
-    "users": [
-      {
-        "id": "...",
-        "firstName": "John",
-        "lastName": "Doe",
-        "email": "admin@siretech.com",
-        "phone": "+254712345678",
-        "role": "finance",
-        "isActive": true,
-        "isVerified": true,
-        "lastLoginAt": "2025-01-01T12:00:00.000Z",
-        "createdAt": "2025-01-01T00:00:00.000Z"
-      }
-    ],
-    "pagination": {
-      "currentPage": 1,
-      "totalPages": 5,
-      "totalUsers": 50,
-      "hasNextPage": true,
-      "hasPrevPage": false
-    }
-  }
-}
-```
-
-#### `GET /api/users/profile`
-**Headers:** `Authorization: Bearer <token>`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "id": "...",
-      "firstName": "John",
-      "lastName": "Doe",
-      "email": "admin@siretech.com",
-      "phone": "+254712345678",
-      "avatar": "https://cloudinary.com/...",
-      "role": "finance",
-      "isVerified": true,
-      "isActive": true,
-      "country": "Kenya",
-      "timezone": "Africa/Nairobi",
-      "lastLoginAt": "2025-01-01T12:00:00.000Z",
-      "createdAt": "2025-01-01T00:00:00.000Z"
-    }
-  }
-}
-```
-
-#### `PUT /api/users/:id`
-**Body:**
-```json
-{
-  "firstName": "Jane",
-  "lastName": "Smith",
-  "email": "jane@siretech.com",
-  "phone": "+254712345679"
-}
-```
-
-#### `PATCH /api/users/:id/role`
-**Body:**
-```json
-{
-  "role": "project_manager"
-}
-```
-
----
 
 ## 🔧 JWT Token Structure
 
