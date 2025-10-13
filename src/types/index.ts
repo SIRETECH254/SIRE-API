@@ -136,8 +136,6 @@ export interface IService extends Document {
   _id: string;
   title: string;
   description: string;
-  category: 'web_development' | 'mobile_app' | 'digital_marketing' | 'ui_ux_design' | 'consulting' | 'other';
-  basePrice?: number;
   features: string[];
   isActive: boolean;
   icon?: string;
