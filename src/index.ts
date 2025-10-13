@@ -70,9 +70,10 @@ mongoose.connect(process.env.MONGO_URI as string)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Import Routes
-import authRoutes from './routes/authRoutes.js';
-import userRoutes from './routes/userRoutes.js';
-import clientRoutes from './routes/clientRoutes.js';
+import authRoutes from './routes/authRoutes';
+import userRoutes from './routes/userRoutes';
+import clientRoutes from './routes/clientRoutes';
+import projectRoutes from './routes/projectRoutes';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
@@ -81,12 +82,13 @@ app.use("/api/users", userRoutes);
 
 app.use("/api/clients", clientRoutes);
 
+app.use("/api/projects", projectRoutes);
+
 // TODO: Implement remaining routes
 // app.use("/api/services", serviceRoutes);
 // app.use("/api/quotations", quotationRoutes);
 // app.use("/api/invoices", invoiceRoutes);
 // app.use("/api/payments", paymentRoutes);
-// app.use("/api/projects", projectRoutes);
 // app.use("/api/testimonials", testimonialRoutes);
 // app.use("/api/notifications", notificationRoutes);
 // app.use("/api/contact", contactRoutes);
@@ -179,6 +181,7 @@ io.on('connection', (socket) => {
 
 // Make io and socketConnections available to controllers
 app.set('io', io);
+
 app.set('socketConnections', socketConnections);
 
 // Main API endpoint
@@ -202,11 +205,11 @@ app.get('/api', (req: express.Request, res: express.Response) => {
       auth: '/api/auth',
       users: '/api/users',
       clients: '/api/clients',
+      projects: '/api/projects',
       services: '/api/services (coming soon)',
       quotations: '/api/quotations (coming soon)',
       invoices: '/api/invoices (coming soon)',
       payments: '/api/payments (coming soon)',
-      projects: '/api/projects (coming soon)',
       testimonials: '/api/testimonials (coming soon)',
       notifications: '/api/notifications (coming soon)',
       contact: '/api/contact (coming soon)',
