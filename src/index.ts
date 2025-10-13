@@ -72,14 +72,16 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Import Routes
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import clientRoutes from './routes/clientRoutes.js';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
 
 app.use("/api/users", userRoutes);
 
+app.use("/api/clients", clientRoutes);
+
 // TODO: Implement remaining routes
-// app.use("/api/clients", clientRoutes);
 // app.use("/api/services", serviceRoutes);
 // app.use("/api/quotations", quotationRoutes);
 // app.use("/api/invoices", invoiceRoutes);
@@ -200,15 +202,15 @@ app.get('/api', (req: express.Request, res: express.Response) => {
       auth: '/api/auth',
       users: '/api/users',
       clients: '/api/clients',
-      services: '/api/services',
-      quotations: '/api/quotations',
-      invoices: '/api/invoices',
-      payments: '/api/payments',
-      projects: '/api/projects',
-      testimonials: '/api/testimonials',
-      notifications: '/api/notifications',
-      contact: '/api/contact',
-      dashboard: '/api/dashboard'
+      services: '/api/services (coming soon)',
+      quotations: '/api/quotations (coming soon)',
+      invoices: '/api/invoices (coming soon)',
+      payments: '/api/payments (coming soon)',
+      projects: '/api/projects (coming soon)',
+      testimonials: '/api/testimonials (coming soon)',
+      notifications: '/api/notifications (coming soon)',
+      contact: '/api/contact (coming soon)',
+      dashboard: '/api/dashboard (coming soon)'
     }
   });
 });
