@@ -16,12 +16,8 @@ const getAllowedOrigins = () => {
   // Default fallback origins for SIRE API
   const defaultOrigins = [
     'http://localhost:3000',
-    'http://localhost:3001', 
-    'http://localhost:5000',
     'http://localhost:5173',
-    'http://localhost:5174',
-    'https://siretech.com',
-    'https://admin.siretech.com'
+    'http://localhost:5174'
   ];
   
   if (!process.env.CORS_ORIGIN) {
@@ -80,6 +76,7 @@ import userRoutes from './routes/userRoutes.js';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
+
 app.use("/api/users", userRoutes);
 
 // TODO: Implement remaining routes
