@@ -112,8 +112,23 @@ export interface IClient extends Document {
   country?: string;
   isActive: boolean;
   emailVerified: boolean;
+  // OTP Verification Fields
+  otpCode?: string;
+  otpExpiry?: Date;
+  // Password Reset Fields
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  // Activity Tracking
+  lastLoginAt?: Date;
+  // Notification Preferences
+  notificationPreferences?: {
+    email?: boolean;
+    sms?: boolean;
+    inApp?: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
+  fullName?: string; // Virtual field
 }
 
 // ===== SERVICE TYPES =====
@@ -121,8 +136,6 @@ export interface IService extends Document {
   _id: string;
   title: string;
   description: string;
-  category: 'web_development' | 'mobile_app' | 'digital_marketing' | 'ui_ux_design' | 'consulting' | 'other';
-  basePrice?: number;
   features: string[];
   isActive: boolean;
   icon?: string;

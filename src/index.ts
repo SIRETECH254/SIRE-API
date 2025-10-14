@@ -70,25 +70,31 @@ mongoose.connect(process.env.MONGO_URI as string)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Import Routes
-import authRoutes from './routes/authRoutes.js';
-import userRoutes from './routes/userRoutes.js';
+import authRoutes from './routes/authRoutes';
+import userRoutes from './routes/userRoutes';
+import clientRoutes from './routes/clientRoutes';
+import projectRoutes from './routes/projectRoutes';
+import serviceRoutes from './routes/serviceRoutes';
+import quotationRoutes from './routes/quotationRoutes';
+import invoiceRoutes from './routes/invoiceRoutes';
+import paymentRoutes from './routes/paymentRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
 
 app.use("/api/users", userRoutes);
 
-// TODO: Implement remaining routes
-// app.use("/api/clients", clientRoutes);
-// app.use("/api/services", serviceRoutes);
-// app.use("/api/quotations", quotationRoutes);
-// app.use("/api/invoices", invoiceRoutes);
-// app.use("/api/payments", paymentRoutes);
-// app.use("/api/projects", projectRoutes);
-// app.use("/api/testimonials", testimonialRoutes);
-// app.use("/api/notifications", notificationRoutes);
-// app.use("/api/contact", contactRoutes);
-// app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/clients", clientRoutes);
+
+app.use("/api/projects", projectRoutes);
+
+app.use("/api/services", serviceRoutes);
+
+app.use("/api/quotations", quotationRoutes);
+app.use("/api/invoices", invoiceRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: express.Request, res: express.Response) => {
@@ -177,6 +183,7 @@ io.on('connection', (socket) => {
 
 // Make io and socketConnections available to controllers
 app.set('io', io);
+
 app.set('socketConnections', socketConnections);
 
 // Main API endpoint
@@ -200,15 +207,15 @@ app.get('/api', (req: express.Request, res: express.Response) => {
       auth: '/api/auth',
       users: '/api/users',
       clients: '/api/clients',
-      services: '/api/services',
-      quotations: '/api/quotations',
-      invoices: '/api/invoices',
-      payments: '/api/payments',
       projects: '/api/projects',
-      testimonials: '/api/testimonials',
-      notifications: '/api/notifications',
-      contact: '/api/contact',
-      dashboard: '/api/dashboard'
+      services: '/api/services',
+      quotations: '/api/quotations (coming soon)',
+      invoices: '/api/invoices (coming soon)',
+      payments: '/api/payments (coming soon)',
+      testimonials: '/api/testimonials (coming soon)',
+      notifications: '/api/notifications (coming soon)',
+      contact: '/api/contact (coming soon)',
+      dashboard: '/api/dashboard (coming soon)'
     }
   });
 });

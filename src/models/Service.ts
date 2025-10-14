@@ -5,32 +5,28 @@ const serviceSchema = new Schema<IService>({
   title: {
     type: String,
     required: [true, 'Service title is required'],
+    unique: true,
     trim: true,
-    maxlength: [200, 'Title cannot exceed 200 characters']
+    maxlength: [100, 'Title cannot exceed 100 characters']
   },
   description: {
     type: String,
     required: [true, 'Service description is required'],
     trim: true
   },
-  category: {
-    type: String,
-    enum: {
-      values: ['web_development', 'mobile_app', 'digital_marketing', 'ui_ux_design', 'consulting', 'other'],
-      message: 'Invalid service category'
-    },
-    default: 'other'
+  features: {
+    type: [String],
+    required: [true, 'Features are required'],
+    validate: {
+      validator: function(v: string[]) {
+        return v && v.length > 0;
+      },
+      message: 'At least one feature is required'
+    }
   },
-  basePrice: {
-    type: Number,
-    min: [0, 'Base price cannot be negative']
-  },
-  features: [{
-    type: String,
-    trim: true
-  }],
   isActive: {
     type: Boolean,
+    required: [true, 'Active status is required'],
     default: true
   },
   icon: {
@@ -46,13 +42,11 @@ const serviceSchema = new Schema<IService>({
   timestamps: true
 });
 
-serviceSchema.index({ title: 1 });
-serviceSchema.index({ category: 1 });
+// Indexes for better performance
 serviceSchema.index({ isActive: 1 });
-serviceSchema.index({ createdAt: -1 });
+// Note: title index is already created by unique: true
 
 const Service = mongoose.model<IService>('Service', serviceSchema);
 
 export default Service;
-
 
