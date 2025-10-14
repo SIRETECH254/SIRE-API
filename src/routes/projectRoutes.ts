@@ -23,6 +23,247 @@ import { uploadProjectAttachment } from '../config/cloudinary';
 const router = express.Router();
 
 /**
+ * @openapi
+ * /api/projects:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get all projects with filtering and pagination
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: List of projects
+ *   post:
+ *     tags: [Projects]
+ *     summary: Create new project
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '201':
+ *         description: Project created
+ *
+ * /api/projects/stats:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get project statistics
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Stats
+ *
+ * /api/projects/assigned:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get projects assigned to current user
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Assigned projects
+ *
+ * /api/projects/client/{clientId}:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get client projects
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Projects
+ *
+ * /api/projects/{projectId}:
+ *   get:
+ *     tags: [Projects]
+ *     summary: Get single project
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Project
+ *   put:
+ *     tags: [Projects]
+ *     summary: Update project
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Updated
+ *   delete:
+ *     tags: [Projects]
+ *     summary: Delete project
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Deleted
+ *
+ * /api/projects/{projectId}/assign:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Assign team members to project
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Assigned
+ *
+ * /api/projects/{projectId}/status:
+ *   patch:
+ *     tags: [Projects]
+ *     summary: Update project status
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Status updated
+ *
+ * /api/projects/{projectId}/progress:
+ *   patch:
+ *     tags: [Projects]
+ *     summary: Update project progress
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Progress updated
+ *
+ * /api/projects/{projectId}/milestones:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Add project milestone
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '201':
+ *         description: Milestone added
+ *
+ * /api/projects/{projectId}/milestones/{milestoneId}:
+ *   put:
+ *     tags: [Projects]
+ *     summary: Update milestone
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: milestoneId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Milestone updated
+ *   delete:
+ *     tags: [Projects]
+ *     summary: Delete milestone
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: milestoneId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Milestone deleted
+ *
+ * /api/projects/{projectId}/attachments:
+ *   post:
+ *     tags: [Projects]
+ *     summary: Upload project attachment
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Attachment uploaded
+ *
+ * /api/projects/{projectId}/attachments/{attachmentId}:
+ *   delete:
+ *     tags: [Projects]
+ *     summary: Delete project attachment
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: projectId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: attachmentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Attachment deleted
+ */
+/**
  * @route   POST /api/projects
  * @desc    Create new project
  * @access  Private (Admin, Project Manager)

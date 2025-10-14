@@ -15,6 +15,108 @@ import { uploadServiceIcon as uploadIconMiddleware } from '../config/cloudinary'
 const router = express.Router();
 
 /**
+ * @openapi
+ * /api/services:
+ *   get:
+ *     tags: [Services]
+ *     summary: Get all services with filtering and pagination
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: List of services
+ *   post:
+ *     tags: [Services]
+ *     summary: Create new service
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '201':
+ *         description: Service created
+ *
+ * /api/services/active:
+ *   get:
+ *     tags: [Services]
+ *     summary: Get all active services
+ *     responses:
+ *       '200':
+ *         description: List of active services
+ *
+ * /api/services/{serviceId}:
+ *   get:
+ *     tags: [Services]
+ *     summary: Get single service
+ *     parameters:
+ *       - in: path
+ *         name: serviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Service
+ *   put:
+ *     tags: [Services]
+ *     summary: Update service
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: serviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Updated
+ *   delete:
+ *     tags: [Services]
+ *     summary: Delete service
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: serviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Deleted
+ *
+ * /api/services/{serviceId}/toggle-status:
+ *   patch:
+ *     tags: [Services]
+ *     summary: Toggle service status
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: serviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Status updated
+ *
+ * /api/services/{serviceId}/icon:
+ *   post:
+ *     tags: [Services]
+ *     summary: Upload service icon
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: serviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Icon uploaded
+ */
+/**
  * @route   GET /api/services/active
  * @desc    Get all active services
  * @access  Public
