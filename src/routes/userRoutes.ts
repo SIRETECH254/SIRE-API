@@ -18,6 +18,152 @@ import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/a
 const router = express.Router();
 
 /**
+ * @openapi
+ * /api/users/profile:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get current user profile
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: User profile
+ *   put:
+ *     tags: [Users]
+ *     summary: Update own profile
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Updated
+ *
+ * /api/users/change-password:
+ *   put:
+ *     tags: [Users]
+ *     summary: Change password
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Password changed
+ *
+ * /api/users/notifications:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get notification preferences
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Preferences
+ *   put:
+ *     tags: [Users]
+ *     summary: Update notification preferences
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Preferences updated
+ *
+ * /api/users/admin-create:
+ *   post:
+ *     tags: [Users]
+ *     summary: Admin create customer
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '201':
+ *         description: Created
+ *
+ * /api/users:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get all users
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: List of users
+ *
+ * /api/users/{userId}:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get single user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: User
+ *   delete:
+ *     tags: [Users]
+ *     summary: Delete user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Deleted
+ *
+ * /api/users/{userId}/status:
+ *   put:
+ *     tags: [Users]
+ *     summary: Update user status
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Status updated
+ *
+ * /api/users/{userId}/admin:
+ *   put:
+ *     tags: [Users]
+ *     summary: Set user admin status
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Admin updated
+ *
+ * /api/users/{userId}/roles:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get user roles
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Roles
+ */
+/**
  * @route   GET /api/users/profile
  * @desc    Get current user profile
  * @access  Private

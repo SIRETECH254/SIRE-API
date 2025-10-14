@@ -12,6 +12,102 @@ import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
+/**
+ * @openapi
+ * /api/payments:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Get all payments
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: List of payments
+ *   post:
+ *     tags: [Payments]
+ *     summary: Create payment
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '201':
+ *         description: Created
+ *
+ * /api/payments/client/{clientId}:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Get client payments
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client payments
+ *
+ * /api/payments/invoice/{invoiceId}:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Get payments for invoice
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: invoiceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Invoice payments
+ *
+ * /api/payments/{paymentId}:
+ *   get:
+ *     tags: [Payments]
+ *     summary: Get single payment
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: paymentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Payment
+ *   put:
+ *     tags: [Payments]
+ *     summary: Update payment
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: paymentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Updated
+ *   delete:
+ *     tags: [Payments]
+ *     summary: Delete payment
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: paymentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Deleted
+ */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPayment);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), getAllPayments);
 router.get('/client/:clientId', authenticateToken, getClientPayments);

@@ -103,7 +103,6 @@ const invoiceSchema = new Schema<IInvoice>({
   timestamps: true
 });
 
-invoiceSchema.index({ invoiceNumber: 1 });
 invoiceSchema.index({ client: 1 });
 invoiceSchema.index({ status: 1 });
 invoiceSchema.index({ createdBy: 1 });

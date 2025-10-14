@@ -65,7 +65,6 @@ const paymentSchema = new Schema<IPayment>({
   timestamps: true
 });
 
-paymentSchema.index({ paymentNumber: 1 });
 paymentSchema.index({ invoice: 1 });
 paymentSchema.index({ client: 1 });
 paymentSchema.index({ status: 1 });
