@@ -75,6 +75,10 @@ import userRoutes from './routes/userRoutes';
 import clientRoutes from './routes/clientRoutes';
 import projectRoutes from './routes/projectRoutes';
 import serviceRoutes from './routes/serviceRoutes';
+import quotationRoutes from './routes/quotationRoutes';
+import invoiceRoutes from './routes/invoiceRoutes';
+import paymentRoutes from './routes/paymentRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
@@ -87,14 +91,10 @@ app.use("/api/projects", projectRoutes);
 
 app.use("/api/services", serviceRoutes);
 
-// TODO: Implement remaining routes
-// app.use("/api/quotations", quotationRoutes);
-// app.use("/api/invoices", invoiceRoutes);
-// app.use("/api/payments", paymentRoutes);
-// app.use("/api/testimonials", testimonialRoutes);
-// app.use("/api/notifications", notificationRoutes);
-// app.use("/api/contact", contactRoutes);
-// app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/quotations", quotationRoutes);
+app.use("/api/invoices", invoiceRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: express.Request, res: express.Response) => {
