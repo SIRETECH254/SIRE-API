@@ -74,6 +74,7 @@ import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
 import clientRoutes from './routes/clientRoutes';
 import projectRoutes from './routes/projectRoutes';
+import serviceRoutes from './routes/serviceRoutes';
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
@@ -84,8 +85,9 @@ app.use("/api/clients", clientRoutes);
 
 app.use("/api/projects", projectRoutes);
 
+app.use("/api/services", serviceRoutes);
+
 // TODO: Implement remaining routes
-// app.use("/api/services", serviceRoutes);
 // app.use("/api/quotations", quotationRoutes);
 // app.use("/api/invoices", invoiceRoutes);
 // app.use("/api/payments", paymentRoutes);
@@ -206,7 +208,7 @@ app.get('/api', (req: express.Request, res: express.Response) => {
       users: '/api/users',
       clients: '/api/clients',
       projects: '/api/projects',
-      services: '/api/services (coming soon)',
+      services: '/api/services',
       quotations: '/api/quotations (coming soon)',
       invoices: '/api/invoices (coming soon)',
       payments: '/api/payments (coming soon)',
