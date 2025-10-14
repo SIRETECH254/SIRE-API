@@ -131,7 +131,7 @@ const projectSchema = new Schema<IProject>({
 });
 
 // Indexes for better performance
-projectSchema.index({ projectNumber: 1 });
+// Note: projectNumber index is already created by unique: true
 projectSchema.index({ client: 1 });
 projectSchema.index({ status: 1 });
 projectSchema.index({ priority: 1 });

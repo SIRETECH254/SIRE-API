@@ -105,8 +105,7 @@ const clientSchema = new Schema<IClient>({
 });
 
 // Indexes for better performance
-clientSchema.index({ email: 1 });
-clientSchema.index({ phone: 1 });
+// Note: email and phone indexes are already created by unique: true
 clientSchema.index({ isActive: 1 });
 clientSchema.index({ company: 1 });
 clientSchema.index({ isActive: 1, emailVerified: 1 });

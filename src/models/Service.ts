@@ -44,7 +44,7 @@ const serviceSchema = new Schema<IService>({
 
 // Indexes for better performance
 serviceSchema.index({ isActive: 1 });
-serviceSchema.index({ title: 1 });
+// Note: title index is already created by unique: true
 
 const Service = mongoose.model<IService>('Service', serviceSchema);
 

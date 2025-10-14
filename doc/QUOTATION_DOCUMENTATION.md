@@ -21,7 +21,7 @@ The SIRE Tech API Quotation Management System handles all quotation-related oper
 ### Quotation System Features
 - **Quotation Creation** - Admin creates quotations for clients
 - **Auto-numbering** - Unique quotation numbers (QT-2025-0001)
-- **Service Management** - Multiple services with quantities and pricing
+- **Line Item Management** - Multiple items with descriptions, quantities and pricing
 - **Financial Calculations** - Subtotal, tax, discount, total automation
 - **Client Approval** - Accept or reject quotations
 - **PDF Generation** - Professional quotation PDFs with tables
@@ -49,8 +49,8 @@ interface IQuotation {
   client: ObjectId;              // Reference to Client
   projectTitle: string;
   projectDescription: string;
-  services: Array<{
-    service: ObjectId;           // Reference to Service
+  items: Array<{
+    description: string;         // Item description
     quantity: number;
     unitPrice: number;
     total: number;               // Auto-calculated
@@ -72,7 +72,7 @@ interface IQuotation {
 ### Key Features
 - **Auto-numbering** - Sequential quotation numbers by year
 - **Client Association** - Linked to client record
-- **Service Items** - Multiple services with quantities
+- **Line Items** - Multiple items with descriptions and quantities
 - **Automatic Calculations** - Subtotal, tax, discount, total
 - **Status Workflow** - Defined lifecycle states
 - **Validity Period** - Expiration date tracking
@@ -88,7 +88,7 @@ quotationNumber: { required: true, unique: true }
 client: { required: true, ref: 'Client' }
 projectTitle: { required: true, maxlength: 200 }
 projectDescription: { required: true }
-services: { required: true, minlength: 1 }
+items: { required: true, minlength: 1 }
 subtotal: { required: true, min: 0 }
 tax: { required: true, min: 0 }
 discount: { required: true, min: 0 }
@@ -133,11 +133,11 @@ const quotationSchema = new Schema<IQuotation>({
     required: [true, 'Project description is required'],
     trim: true
   },
-  services: [{
-    service: {
-      type: Schema.Types.ObjectId,
-      ref: 'Service',
-      required: [true, 'Service is required']
+  items: [{
+    description: {
+      type: String,
+      required: [true, 'Item description is required'],
+      trim: true
     },
     quantity: {
       type: Number,
@@ -209,7 +209,7 @@ const quotationSchema = new Schema<IQuotation>({
 });
 
 // Indexes for better performance
-quotationSchema.index({ quotationNumber: 1 });
+// Note: quotationNumber index is already created by unique: true
 quotationSchema.index({ client: 1 });
 quotationSchema.index({ status: 1 });
 quotationSchema.index({ createdBy: 1 });
@@ -229,13 +229,13 @@ quotationSchema.pre('save', async function(next) {
 
 // Pre-save middleware to calculate totals
 quotationSchema.pre('save', function(next) {
-  // Calculate service totals
-  this.services.forEach(service => {
-    service.total = service.quantity * service.unitPrice;
+  // Calculate item totals
+  this.items.forEach(item => {
+    item.total = item.quantity * item.unitPrice;
   });
   
   // Calculate subtotal
-  this.subtotal = this.services.reduce((sum, service) => sum + service.total, 0);
+  this.subtotal = this.items.reduce((sum, item) => sum + item.total, 0);
   
   // Calculate total amount
   this.totalAmount = this.subtotal + this.tax - this.discount;
@@ -258,7 +258,6 @@ import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Quotation from '../models/Quotation';
 import Client from '../models/Client';
-import Service from '../models/Service';
 import Invoice from '../models/Invoice';
 import { generateQuotationPDF } from '../utils/pdfGenerator';
 import { sendQuotationEmail } from '../services/external/emailService';
@@ -271,7 +270,7 @@ import { sendQuotationEmail } from '../services/external/emailService';
 **Access:** Admin users (super_admin, finance)
 **Validation:**
 - Client existence check
-- Service existence and availability check
+- Items validation
 - Valid dates (validUntil in future)
 - Price calculations
 **Process:**
@@ -285,12 +284,12 @@ import { sendQuotationEmail } from '../services/external/emailService';
 ```typescript
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { client, projectTitle, projectDescription, services, tax, discount, validUntil, notes }: {
+        const { client, projectTitle, projectDescription, items, tax, discount, validUntil, notes }: {
             client: string;
             projectTitle: string;
             projectDescription: string;
-            services: Array<{
-                service: string;
+            items: Array<{
+                description: string;
                 quantity: number;
                 unitPrice: number;
             }>;
@@ -301,8 +300,8 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         } = req.body;
 
         // Validation
-        if (!client || !projectTitle || !projectDescription || !services || services.length === 0) {
-            return next(errorHandler(400, "Client, project title, description, and services are required"));
+        if (!client || !projectTitle || !projectDescription || !items || items.length === 0) {
+            return next(errorHandler(400, "Client, project title, description, and items are required"));
         }
 
         // Check if client exists
@@ -311,19 +310,12 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
             return next(errorHandler(404, "Client not found"));
         }
 
-        // Verify all services exist
-        const serviceIds = services.map(s => s.service);
-        const servicesExist = await Service.find({ _id: { $in: serviceIds } });
-        if (servicesExist.length !== serviceIds.length) {
-            return next(errorHandler(404, "One or more services not found"));
-        }
-
         // Create quotation (totals will be calculated by pre-save middleware)
         const quotation = new Quotation({
             client,
             projectTitle,
             projectDescription,
-            services,
+            items,
             tax: tax || 0,
             discount: discount || 0,
             validUntil,
@@ -335,7 +327,6 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 
         // Populate references
         await quotation.populate('client', 'firstName lastName email company');
-        await quotation.populate('services.service', 'title description');
 
         res.status(201).json({
             success: true,
@@ -361,7 +352,7 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 - Filter by status, client
 - Date range filtering
 - Sort options
-- Population of client and services
+- Population of client
 **Response:** Paginated quotation list
 
 **Controller Implementation:**
@@ -397,7 +388,6 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
 
         const quotations = await Quotation.find(query)
             .populate('client', 'firstName lastName email company')
-            .populate('services.service', 'title description')
             .populate('createdBy', 'firstName lastName email')
             .sort({ createdAt: 'desc' })
             .limit(options.limit * 1)
@@ -439,7 +429,6 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 
         const quotation = await Quotation.findById(quotationId)
             .populate('client', 'firstName lastName email company phone')
-            .populate('services.service', 'title description category')
             .populate('createdBy', 'firstName lastName email')
             .populate('convertedToInvoice');
 
@@ -466,7 +455,7 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 **Access:** Admin only (before client acceptance)
 **Allowed Fields:**
 - projectTitle, projectDescription
-- services, tax, discount, notes
+- items, tax, discount, notes
 - validUntil
 - Cannot update after acceptance
 **Process:**
@@ -480,10 +469,10 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 export const updateQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params;
-        const { projectTitle, projectDescription, services, tax, discount, validUntil, notes }: {
+        const { projectTitle, projectDescription, items, tax, discount, validUntil, notes }: {
             projectTitle?: string;
             projectDescription?: string;
-            services?: Array<any>;
+            items?: Array<any>;
             tax?: number;
             discount?: number;
             validUntil?: Date;
@@ -504,7 +493,7 @@ export const updateQuotation = async (req: Request, res: Response, next: NextFun
         // Update allowed fields
         if (projectTitle) quotation.projectTitle = projectTitle;
         if (projectDescription) quotation.projectDescription = projectDescription;
-        if (services) quotation.services = services;
+        if (items) quotation.items = items;
         if (tax !== undefined) quotation.tax = tax;
         if (discount !== undefined) quotation.discount = discount;
         if (validUntil) quotation.validUntil = validUntil;
@@ -706,11 +695,11 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
             client: quotation.client,
             quotation: quotation._id,
             projectTitle: quotation.projectTitle,
-            items: quotation.services.map(s => ({
-                description: `Service: ${s.service}`,
-                quantity: s.quantity,
-                unitPrice: s.unitPrice,
-                total: s.total
+            items: quotation.items.map(item => ({
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                total: item.total
             })),
             tax: quotation.tax,
             discount: quotation.discount,
@@ -759,8 +748,7 @@ export const generateQuotationPDF = async (req: Request, res: Response, next: Ne
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email company phone address city country')
-            .populate('services.service', 'title description');
+            .populate('client', 'firstName lastName email company phone address city country');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
@@ -797,8 +785,7 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email')
-            .populate('services.service', 'title description');
+            .populate('client', 'firstName lastName email');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
@@ -838,7 +825,6 @@ export const getClientQuotations = async (req: Request, res: Response, next: Nex
         const { clientId } = req.params;
 
         const quotations = await Quotation.find({ client: clientId })
-            .populate('services.service', 'title description')
             .populate('createdBy', 'firstName lastName email')
             .sort({ createdAt: 'desc' });
 
@@ -1065,19 +1051,24 @@ curl -X POST http://localhost:5000/api/quotations \
     "client": "client_id_here",
     "projectTitle": "E-commerce Website Development",
     "projectDescription": "Full-featured online store with payment integration",
-    "services": [
+    "items": [
       {
-        "service": "service_id_1",
+        "description": "Frontend Development (React/Next.js)",
         "quantity": 1,
         "unitPrice": 5000
       },
       {
-        "service": "service_id_2",
-        "quantity": 2,
+        "description": "Backend API Development (Node.js/Express)",
+        "quantity": 1,
+        "unitPrice": 4000
+      },
+      {
+        "description": "Payment Gateway Integration",
+        "quantity": 1,
         "unitPrice": 1500
       }
     ],
-    "tax": 800,
+    "tax": 1050,
     "discount": 500,
     "validUntil": "2025-12-31",
     "notes": "Payment terms: 50% upfront, 50% on completion"
@@ -1128,7 +1119,7 @@ curl -X POST http://localhost:5000/api/quotations/<quotationId>/send \
 ### Input Validation
 - **Required Fields** - All critical fields validated
 - **Positive Numbers** - Prices and quantities must be positive
-- **Service Validation** - Verify service existence
+- **Item Validation** - Verify at least one item exists
 - **Date Validation** - Valid until must be in future
 
 ---
@@ -1165,15 +1156,11 @@ curl -X POST http://localhost:5000/api/quotations/<quotationId>/send \
 - Client approval workflow
 - Email notifications
 
-### Service Integration
-- Multiple services per quotation
-- Service details populated
-- Price synchronization
-
 ### Invoice Integration
 - Seamless conversion to invoices
 - Data inheritance
 - Reference linking
+- Line items transferred to invoice
 
 ### Project Integration
 - Convert quotation to project
