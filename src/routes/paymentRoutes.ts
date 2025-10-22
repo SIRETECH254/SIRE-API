@@ -6,7 +6,12 @@ import {
     updatePayment,
     deletePayment,
     getClientPayments,
-    getInvoicePayments
+    getInvoicePayments,
+    initiatePayment,
+    mpesaWebhook,
+    paystackWebhook,
+    queryMpesaStatus,
+    queryMpesaByCheckoutId
 } from '../controllers/paymentController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -108,6 +113,7 @@ const router = express.Router();
  *       '200':
  *         description: Deleted
  */
+// Basic payment routes
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPayment);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), getAllPayments);
 router.get('/client/:clientId', authenticateToken, getClientPayments);
@@ -115,6 +121,17 @@ router.get('/invoice/:invoiceId', authenticateToken, getInvoicePayments);
 router.get('/:paymentId', authenticateToken, getPayment);
 router.put('/:paymentId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updatePayment);
 router.delete('/:paymentId', authenticateToken, authorizeRoles(['super_admin']), deletePayment);
+
+// Payment gateway routes
+router.post('/initiate', authenticateToken, initiatePayment);
+
+// Webhook routes (public - no authentication required)
+router.post('/webhooks/mpesa', mpesaWebhook);
+router.post('/webhooks/paystack', paystackWebhook);
+
+// M-Pesa status query routes
+router.get('/:paymentId/mpesa-status', authenticateToken, queryMpesaStatus);
+router.get('/mpesa-status/:checkoutRequestId', authenticateToken, queryMpesaByCheckoutId);
 
 export default router;
 

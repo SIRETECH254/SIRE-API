@@ -1,4 +1,4 @@
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 // ===== USER TYPES =====
 export interface IUser extends Document {
@@ -201,8 +201,8 @@ export interface IInvoice extends Document {
 export interface IPayment extends Document {
   _id: string;
   paymentNumber: string;
-  invoice: string; // Reference to Invoice
-  client: string; // Reference to Client
+  invoice: Types.ObjectId; // Reference to Invoice
+  client: Types.ObjectId; // Reference to Client
   amount: number;
   paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
   status: 'pending' | 'completed' | 'failed' | 'refunded';
@@ -211,6 +211,16 @@ export interface IPayment extends Document {
   paymentDate: Date;
   notes?: string;
   metadata?: Record<string, any>;
+  processorRefs?: {
+    daraja?: {
+      merchantRequestId?: string;
+      checkoutRequestId?: string;
+    };
+    paystack?: {
+      reference?: string;
+    };
+  };
+  rawPayload?: any;
   createdAt: Date;
   updatedAt: Date;
 }
