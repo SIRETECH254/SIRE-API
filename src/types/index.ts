@@ -139,7 +139,7 @@ export interface IService extends Document {
   features: string[];
   isActive: boolean;
   icon?: string;
-  createdBy: string; // Reference to User
+  createdBy: Types.ObjectId; // Reference to User
   createdAt: Date;
   updatedAt: Date;
 }
@@ -148,11 +148,11 @@ export interface IService extends Document {
 export interface IQuotation extends Document {
   _id: string;
   quotationNumber: string;
-  client: string; // Reference to Client
+  client: Types.ObjectId; // Reference to Client
   projectTitle: string;
   projectDescription: string;
-  services: Array<{
-    service: string; // Reference to Service
+  items: Array<{
+    description: string;
     quantity: number;
     unitPrice: number;
     total: number;
@@ -164,8 +164,8 @@ export interface IQuotation extends Document {
   status: 'pending' | 'sent' | 'accepted' | 'rejected' | 'converted';
   validUntil: Date;
   notes?: string;
-  createdBy: string; // Reference to User
-  convertedToInvoice?: string; // Reference to Invoice
+  createdBy: Types.ObjectId; // Reference to User
+  convertedToInvoice?: Types.ObjectId; // Reference to Invoice
   createdAt: Date;
   updatedAt: Date;
 }
@@ -174,8 +174,8 @@ export interface IQuotation extends Document {
 export interface IInvoice extends Document {
   _id: string;
   invoiceNumber: string;
-  client: string; // Reference to Client
-  quotation?: string; // Reference to Quotation
+  client: Types.ObjectId; // Reference to Client
+  quotation?: Types.ObjectId; // Reference to Quotation
   projectTitle: string;
   items: Array<{
     description: string;
@@ -192,7 +192,7 @@ export interface IInvoice extends Document {
   dueDate: Date;
   paidDate?: Date;
   notes?: string;
-  createdBy: string; // Reference to User
+  createdBy: Types.ObjectId; // Reference to User
   createdAt: Date;
   updatedAt: Date;
 }
@@ -231,13 +231,13 @@ export interface IProject extends Document {
   projectNumber: string;
   title: string;
   description: string;
-  client: string; // Reference to Client
-  quotation?: string; // Reference to Quotation
-  invoice?: string; // Reference to Invoice
-  services: string[]; // References to Services
+  client: Types.ObjectId; // Reference to Client
+  quotation?: Types.ObjectId; // Reference to Quotation
+  invoice?: Types.ObjectId; // Reference to Invoice
+  services: Types.ObjectId[]; // References to Services
   status: 'pending' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
   priority: 'low' | 'medium' | 'high' | 'urgent';
-  assignedTo: string[]; // References to User (team members)
+  assignedTo: Types.ObjectId[]; // References to User (team members)
   startDate?: Date;
   endDate?: Date;
   completionDate?: Date;
@@ -252,11 +252,11 @@ export interface IProject extends Document {
   attachments: Array<{
     name: string;
     url: string;
-    uploadedBy: string;
+    uploadedBy: Types.ObjectId;
     uploadedAt: Date;
   }>;
   notes?: string;
-  createdBy: string; // Reference to User
+  createdBy: Types.ObjectId; // Reference to User
   createdAt: Date;
   updatedAt: Date;
 }
@@ -264,13 +264,13 @@ export interface IProject extends Document {
 // ===== TESTIMONIAL TYPES =====
 export interface ITestimonial extends Document {
   _id: string;
-  client: string; // Reference to Client
-  project?: string; // Reference to Project
+  client: Types.ObjectId; // Reference to Client
+  project?: Types.ObjectId; // Reference to Project
   rating: number; // 1-5
   message: string;
   isApproved: boolean;
   isPublished: boolean;
-  approvedBy?: string; // Reference to User
+  approvedBy?: Types.ObjectId; // Reference to User
   approvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -279,7 +279,7 @@ export interface ITestimonial extends Document {
 // ===== NOTIFICATION TYPES =====
 export interface INotification extends Document {
   _id: string;
-  recipient: string; // Reference to User or Client
+  recipient: Types.ObjectId; // Reference to User or Client
   recipientModel: 'User' | 'Client';
   type: 'email' | 'sms' | 'push' | 'in_app';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
@@ -302,7 +302,7 @@ export interface IContactMessage extends Document {
   subject: string;
   message: string;
   status: 'unread' | 'read' | 'replied' | 'archived';
-  repliedBy?: string; // Reference to User
+  repliedBy?: Types.ObjectId; // Reference to User
   repliedAt?: Date;
   reply?: string;
   createdAt: Date;

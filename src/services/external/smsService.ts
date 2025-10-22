@@ -11,7 +11,7 @@ if (process.env.AFRICAS_TALKING_API_KEY && process.env.AFRICAS_TALKING_USERNAME 
     process.env.AFRICAS_TALKING_API_KEY !== 'your-africastalking-api-key' && 
     process.env.AFRICAS_TALKING_USERNAME !== 'your-africastalking-username') {
 
-    africasTalking = AfricasTalking({
+    africasTalking = new AfricasTalking({
         apiKey: process.env.AFRICAS_TALKING_API_KEY,
         username: process.env.AFRICAS_TALKING_USERNAME
     });

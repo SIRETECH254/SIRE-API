@@ -119,7 +119,7 @@ export interface CallbackParseResult {
 
 export const parseCallback = (body: any): CallbackParseResult => {
   const stk = body?.Body?.stkCallback || {};
-  if (!stk) return { valid: false };
+  if (!stk) return { valid: false, success: false };
 
   const resultCode = stk.ResultCode;
   const success = resultCode === 0;
