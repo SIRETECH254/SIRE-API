@@ -2,7 +2,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import multer, { FileFilterCallback } from 'multer';
 import type { Request } from 'express';
-import { errorHandler } from '../middleware/errorHandler.js';
+import { errorHandler } from '../middleware/errorHandler';
 
 // Configure Cloudinary
 cloudinary.config({
