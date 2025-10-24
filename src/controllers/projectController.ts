@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { errorHandler } from '../middleware/errorHandler';
 import Project from '../models/Project';
 import Client from '../models/Client';
@@ -278,7 +279,7 @@ export const assignTeamMembers = async (req: Request, res: Response, next: NextF
             return next(errorHandler(404, "One or more users not found"));
         }
 
-        project.assignedTo = userIds;
+        project.assignedTo = userIds.map(id => new mongoose.Types.ObjectId(id));
         await project.save();
 
         await project.populate('assignedTo', 'firstName lastName email avatar');

@@ -107,7 +107,7 @@ quotationSchema.index({ client: 1, status: 1 });
 quotationSchema.index({ createdAt: -1 });
 
 quotationSchema.pre('save', async function(next) {
-  if (!this.quotationNumber) {
+  if (!(this as any).quotationNumber) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Quotation').countDocuments();
     (this as any).quotationNumber = `QT-${year}-${String(count + 1).padStart(4, '0')}`;

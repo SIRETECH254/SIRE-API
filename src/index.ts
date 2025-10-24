@@ -5,7 +5,7 @@ import "dotenv/config";
 import path from "path";
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import swaggerConfig from './config/swagger.js';
+import swaggerConfig from './config/swagger';
 
 const app = express();
 
