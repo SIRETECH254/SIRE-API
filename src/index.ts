@@ -9,7 +9,7 @@ import swaggerConfig from './config/swagger';
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT as any
 
 // CORS Configuration with fallback defaults
 const getAllowedOrigins = () => {

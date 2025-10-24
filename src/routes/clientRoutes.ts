@@ -26,6 +26,619 @@ import { authenticateToken, authorizeRoles, requireOwnershipOrAdmin } from '../m
 const router = express.Router();
 
 /**
+ * @openapi
+ * /api/clients/register:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Register new client with OTP verification
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - firstName
+ *               - lastName
+ *               - email
+ *               - phone
+ *               - password
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *                 example: "John"
+ *               lastName:
+ *                 type: string
+ *                 example: "Doe"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               phone:
+ *                 type: string
+ *                 example: "+254712345678"
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
+ *               company:
+ *                 type: string
+ *                 example: "Acme Corp"
+ *               address:
+ *                 type: string
+ *                 example: "123 Main St"
+ *               city:
+ *                 type: string
+ *                 example: "Nairobi"
+ *               country:
+ *                 type: string
+ *                 example: "Kenya"
+ *     responses:
+ *       '201':
+ *         description: Client registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Client registered successfully. Please verify your email with the OTP sent."
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                     firstName:
+ *                       type: string
+ *                     lastName:
+ *                       type: string
+ *                     email:
+ *                       type: string
+ *                     phone:
+ *                       type: string
+ *                     emailVerified:
+ *                       type: boolean
+ *       '400':
+ *         description: Validation error
+ *
+ * /api/clients/verify-otp:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Verify OTP and activate client account
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - otp
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               phone:
+ *                 type: string
+ *                 example: "+254712345678"
+ *               otp:
+ *                 type: string
+ *                 example: "123456"
+ *     responses:
+ *       '200':
+ *         description: Email verified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Email verified successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     client:
+ *                       type: object
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *       '400':
+ *         description: Invalid or expired OTP
+ *
+ * /api/clients/resend-otp:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Resend OTP for verification
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               phone:
+ *                 type: string
+ *                 example: "+254712345678"
+ *     responses:
+ *       '200':
+ *         description: OTP resent successfully
+ *
+ * /api/clients/login:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Client login (email/phone + password)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               phone:
+ *                 type: string
+ *                 example: "+254712345678"
+ *               password:
+ *                 type: string
+ *                 example: "password123"
+ *     responses:
+ *       '200':
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Login successful"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     client:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                         firstName:
+ *                           type: string
+ *                         lastName:
+ *                           type: string
+ *                         email:
+ *                           type: string
+ *                         phone:
+ *                           type: string
+ *                         emailVerified:
+ *                           type: boolean
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *       '401':
+ *         description: Invalid credentials
+ *       '403':
+ *         description: Account not verified or inactive
+ *
+ * /api/clients/forgot-password:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Request password reset
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *     responses:
+ *       '200':
+ *         description: Reset instructions sent
+ *
+ * /api/clients/reset-password/{token}:
+ *   post:
+ *     tags: [Clients]
+ *     summary: Reset password with token
+ *     parameters:
+ *       - in: path
+ *         name: token
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - newPassword
+ *             properties:
+ *               newPassword:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "newpassword123"
+ *     responses:
+ *       '200':
+ *         description: Password reset successfully
+ *       '400':
+ *         description: Invalid or expired token
+ *
+ * /api/clients/profile:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client profile
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Client profile
+ *       '401':
+ *         description: Unauthorized
+ *   put:
+ *     tags: [Clients]
+ *     summary: Update client profile
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *                 example: "John"
+ *               lastName:
+ *                 type: string
+ *                 example: "Doe"
+ *               phone:
+ *                 type: string
+ *                 example: "+254712345678"
+ *               company:
+ *                 type: string
+ *                 example: "Acme Corp"
+ *               address:
+ *                 type: string
+ *                 example: "123 Main St"
+ *               city:
+ *                 type: string
+ *                 example: "Nairobi"
+ *               country:
+ *                 type: string
+ *                 example: "Kenya"
+ *     responses:
+ *       '200':
+ *         description: Profile updated successfully
+ *       '401':
+ *         description: Unauthorized
+ *
+ * /api/clients/change-password:
+ *   put:
+ *     tags: [Clients]
+ *     summary: Change client password
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 example: "oldpassword123"
+ *               newPassword:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "newpassword123"
+ *     responses:
+ *       '200':
+ *         description: Password changed successfully
+ *       '400':
+ *         description: Current password is incorrect
+ *       '401':
+ *         description: Unauthorized
+ *
+ * /api/clients/dashboard:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client dashboard
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Client dashboard data
+ *       '401':
+ *         description: Unauthorized
+ *
+ * /api/clients:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get all clients (admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, inactive]
+ *     responses:
+ *       '200':
+ *         description: List of clients
+ *       '401':
+ *         description: Unauthorized
+ *       '403':
+ *         description: Forbidden
+ *
+ * /api/clients/{clientId}:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get single client
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client details
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ *   put:
+ *     tags: [Clients]
+ *     summary: Update client (admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *               lastName:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               phone:
+ *                 type: string
+ *               company:
+ *                 type: string
+ *               address:
+ *                 type: string
+ *               city:
+ *                 type: string
+ *               country:
+ *                 type: string
+ *               isActive:
+ *                 type: boolean
+ *     responses:
+ *       '200':
+ *         description: Client updated successfully
+ *       '401':
+ *         description: Unauthorized
+ *       '403':
+ *         description: Forbidden
+ *       '404':
+ *         description: Client not found
+ *   delete:
+ *     tags: [Clients]
+ *     summary: Delete client (admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client deleted successfully
+ *       '401':
+ *         description: Unauthorized
+ *       '403':
+ *         description: Forbidden
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/status:
+ *   patch:
+ *     tags: [Clients]
+ *     summary: Update client status (admin only)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - isActive
+ *             properties:
+ *               isActive:
+ *                 type: boolean
+ *                 example: true
+ *     responses:
+ *       '200':
+ *         description: Client status updated successfully
+ *       '401':
+ *         description: Unauthorized
+ *       '403':
+ *         description: Forbidden
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/stats:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client statistics
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client statistics
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/projects:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client projects
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client projects
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/invoices:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client invoices
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client invoices
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/payments:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client payments
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client payments
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ *
+ * /api/clients/{clientId}/quotations:
+ *   get:
+ *     tags: [Clients]
+ *     summary: Get client quotations
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Client quotations
+ *       '401':
+ *         description: Unauthorized
+ *       '404':
+ *         description: Client not found
+ */
+
+/**
  * @route   POST /api/clients/register
  * @desc    Register new client with OTP verification
  * @access  Public
