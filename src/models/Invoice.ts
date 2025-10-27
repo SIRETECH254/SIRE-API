@@ -111,7 +111,7 @@ invoiceSchema.index({ client: 1, status: 1 });
 invoiceSchema.index({ createdAt: -1 });
 
 invoiceSchema.pre('save', async function(next) {
-  if (!this.invoiceNumber) {
+  if (!(this as any).invoiceNumber) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Invoice').countDocuments();
     (this as any).invoiceNumber = `INV-${year}-${String(count + 1).padStart(4, '0')}`;

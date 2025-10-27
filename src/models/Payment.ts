@@ -1,7 +1,7 @@
-import mongoose, { Schema } from 'mongoose';
+import mongoose, { Schema, Types } from 'mongoose';
 import type { IPayment } from '../types/index';
 
-const paymentSchema = new Schema<IPayment>({
+const paymentSchema = new Schema({
   paymentNumber: {
     type: String,
     required: [true, 'Payment number is required'],
@@ -9,12 +9,12 @@ const paymentSchema = new Schema<IPayment>({
     trim: true
   },
   invoice: {
-    type: Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'Invoice',
     required: [true, 'Invoice is required']
   },
   client: {
-    type: Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'Client',
     required: [true, 'Client is required']
   },
@@ -60,6 +60,19 @@ const paymentSchema = new Schema<IPayment>({
   },
   metadata: {
     type: Schema.Types.Mixed
+  },
+  processorRefs: {
+    daraja: {
+      merchantRequestId: { type: String },
+      checkoutRequestId: { type: String }
+    },
+    paystack: {
+      reference: { type: String }
+    }
+  },
+  rawPayload: {
+    type: Schema.Types.Mixed,
+    default: null
   }
 }, {
   timestamps: true
@@ -72,9 +85,11 @@ paymentSchema.index({ paymentMethod: 1 });
 paymentSchema.index({ transactionId: 1 });
 paymentSchema.index({ paymentDate: -1 });
 paymentSchema.index({ client: 1, status: 1 });
+paymentSchema.index({ 'processorRefs.daraja.checkoutRequestId': 1 });
+paymentSchema.index({ 'processorRefs.paystack.reference': 1 });
 
 paymentSchema.pre('save', async function(next) {
-  if (!this.paymentNumber) {
+  if (!(this as any).paymentNumber) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Payment').countDocuments();
     (this as any).paymentNumber = `PAY-${year}-${String(count + 1).padStart(4, '0')}`;

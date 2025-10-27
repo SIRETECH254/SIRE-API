@@ -142,18 +142,18 @@ projectSchema.index({ client: 1, status: 1 });
 
 // Pre-save middleware to generate project number
 projectSchema.pre('save', async function(next) {
-  if (!this.projectNumber) {
+  if (!(this as any).projectNumber) {
     const year = new Date().getFullYear();
     const count = await mongoose.model('Project').countDocuments();
-    this.projectNumber = `PRJ-${year}-${String(count + 1).padStart(4, '0')}`;
+    (this as any).projectNumber = `PRJ-${year}-${String(count + 1).padStart(4, '0')}`;
   }
   next();
 });
 
 // Pre-save middleware to set completion date when status changes to completed
 projectSchema.pre('save', function(next) {
-  if (this.isModified('status') && this.status === 'completed' && !this.completionDate) {
-    this.completionDate = new Date();
+  if ((this as any).isModified('status') && (this as any).status === 'completed' && !(this as any).completionDate) {
+    (this as any).completionDate = new Date();
   }
   next();
 });

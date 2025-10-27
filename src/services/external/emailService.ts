@@ -72,7 +72,7 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
         };
 
         return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error, info) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
                 if (error) {
                     console.log(error);
                     reject(errorHandler(500, `Failed to send OTP email: ${error.message}`));
@@ -157,7 +157,7 @@ export const sendPasswordResetEmail = async (email: string, resetToken: string, 
         };
 
         return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error, info) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
                 if (error) {
                     console.log(error);
                     reject(errorHandler(500, `Failed to send password reset email: ${error.message}`));
@@ -235,7 +235,7 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
         };
 
         return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error, info) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
                 if (error) {
                     console.log(error);
                     reject(errorHandler(500, `Failed to send welcome email: ${error.message}`));

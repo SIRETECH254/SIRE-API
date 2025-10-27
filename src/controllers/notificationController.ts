@@ -15,7 +15,7 @@ export const sendNotification = async (req: Request, res: Response, next: NextFu
         }
 
         const RecipientModel = recipientModel === 'User' ? User : Client;
-        const recipientExists = await RecipientModel.findById(recipient);
+        const recipientExists = await (RecipientModel as any).findById(recipient);
         if (!recipientExists) {
             return next(errorHandler(404, "Recipient not found"));
         }

@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
-import User from "../models/User.ts";
-import { errorHandler } from "./errorHandler.ts";
-import type { IUserResponse } from "../types/index.ts";
+import User from "../models/User";
+import { errorHandler } from "./errorHandler";
+import type { IUserResponse } from "../types/index";
 
 // Extend Request interface to include user
 declare global {

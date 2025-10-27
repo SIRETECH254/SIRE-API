@@ -20,7 +20,7 @@ const options = {
     servers: [
       {
         url: process.env.NODE_ENV === 'production' 
-          ? 'https://api.siretech.com' 
+          ? process.env.API_BASE_URL || 'https://siretech.com'
           : `http://localhost:${process.env.PORT || 5000}`,
         description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server'
       }
@@ -181,12 +181,16 @@ const options = {
         },
         LoginRequest: {
           type: 'object',
-          required: ['email', 'password'],
+          required: ['password'],
           properties: {
             email: {
               type: 'string',
               format: 'email',
-              description: 'User email address'
+              description: 'User email address (either email or phone required)'
+            },
+            phone: {
+              type: 'string',
+              description: 'User phone number (either email or phone required)'
             },
             password: {
               type: 'string',
@@ -321,6 +325,90 @@ const options = {
                   description: 'Whether there is a previous page'
                 }
               }
+            }
+          }
+        },
+        Payment: {
+          type: 'object',
+          properties: {
+            _id: {
+              type: 'string',
+              description: 'Payment ID'
+            },
+            paymentNumber: {
+              type: 'string',
+              description: 'Payment number'
+            },
+            invoice: {
+              type: 'string',
+              description: 'Invoice ID'
+            },
+            client: {
+              type: 'string',
+              description: 'Client ID'
+            },
+            amount: {
+              type: 'number',
+              description: 'Payment amount'
+            },
+            paymentMethod: {
+              type: 'string',
+              enum: ['mpesa', 'bank_transfer', 'stripe', 'paypal', 'cash'],
+              description: 'Payment method'
+            },
+            status: {
+              type: 'string',
+              enum: ['pending', 'completed', 'failed', 'refunded'],
+              description: 'Payment status'
+            },
+            transactionId: {
+              type: 'string',
+              description: 'External transaction ID'
+            },
+            reference: {
+              type: 'string',
+              description: 'Payment reference'
+            },
+            paymentDate: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Payment date'
+            },
+            notes: {
+              type: 'string',
+              description: 'Payment notes'
+            },
+            metadata: {
+              type: 'object',
+              description: 'Additional payment metadata'
+            },
+            processorRefs: {
+              type: 'object',
+              properties: {
+                daraja: {
+                  type: 'object',
+                  properties: {
+                    merchantRequestId: { type: 'string' },
+                    checkoutRequestId: { type: 'string' }
+                  }
+                },
+                paystack: {
+                  type: 'object',
+                  properties: {
+                    reference: { type: 'string' }
+                  }
+                }
+              }
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Creation timestamp'
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Last update timestamp'
             }
           }
         }
