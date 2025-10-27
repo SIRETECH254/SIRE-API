@@ -6,16 +6,27 @@ import path from "path";
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import swaggerConfig from './config/swagger.js';
+// Import Routes
+import authRoutes from './routes/authRoutes';
+import userRoutes from './routes/userRoutes';
+import clientRoutes from './routes/clientRoutes';
+import projectRoutes from './routes/projectRoutes';
+import serviceRoutes from './routes/serviceRoutes';
+import quotationRoutes from './routes/quotationRoutes';
+import invoiceRoutes from './routes/invoiceRoutes';
+import paymentRoutes from './routes/paymentRoutes';
+import notificationRoutes from './routes/notificationRoutes';
+
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // CORS Configuration with fallback defaults
 const getAllowedOrigins = () => {
   // Default fallback origins for SIRE API
   const defaultOrigins = [
-    'http://localhost:3000',
+    'http://localhost:4000',
     'http://localhost:5173',
     'http://localhost:5174'
   ];
@@ -69,16 +80,7 @@ mongoose.connect(process.env.MONGO_URI as string)
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
-// Import Routes
-import authRoutes from './routes/authRoutes';
-import userRoutes from './routes/userRoutes';
-import clientRoutes from './routes/clientRoutes';
-import projectRoutes from './routes/projectRoutes';
-import serviceRoutes from './routes/serviceRoutes';
-import quotationRoutes from './routes/quotationRoutes';
-import invoiceRoutes from './routes/invoiceRoutes';
-import paymentRoutes from './routes/paymentRoutes';
-import notificationRoutes from './routes/notificationRoutes';
+
 
 // API ROUTES
 app.use("/api/auth", authRoutes);
@@ -92,8 +94,11 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/services", serviceRoutes);
 
 app.use("/api/quotations", quotationRoutes);
+
 app.use("/api/invoices", invoiceRoutes);
+
 app.use("/api/payments", paymentRoutes);
+
 app.use("/api/notifications", notificationRoutes);
 
 // Health check endpoint
