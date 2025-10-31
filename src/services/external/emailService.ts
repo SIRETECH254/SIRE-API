@@ -256,3 +256,103 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
 
 };
 
+// Send quotation email with PDF attachment
+export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: string, pdfBuffer?: Buffer) => {
+    if (!email || !quotation) {
+        throw errorHandler(400, "Email and quotation are required for sending quotation email");
+    }
+
+    try {
+        const transporter = createTransporter();
+        const clientName = quotation.client 
+            ? `${quotation.client.firstName || ''} ${quotation.client.lastName || ''}`.trim() || 'Client'
+            : 'Client';
+        const quotationNumber = quotation.quotationNumber || 'N/A';
+        const validUntil = quotation.validUntil 
+            ? new Date(quotation.validUntil).toLocaleDateString()
+            : 'N/A';
+        const totalAmount = quotation.totalAmount || 0;
+
+        const mailOptions: any = {
+            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: `Quotation ${quotationNumber} - SIRE Tech`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">Your Business Management Partner</p>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Quotation ${quotationNumber}</h2>
+                        <p style="color: #666; margin-bottom: 20px;">Hi ${clientName},</p>
+                        <p style="color: #666; margin-bottom: 25px;">
+                            Thank you for your interest in our services. Please find attached your quotation.
+                        </p>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Quotation Number:</strong> ${quotationNumber}</p>
+                            ${quotation.project ? `<p style="margin: 5px 0; color: #333;"><strong>Project:</strong> ${quotation.project.title || 'N/A'}</p>` : ''}
+                            <p style="margin: 5px 0; color: #333;"><strong>Valid Until:</strong> ${validUntil}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Total Amount:</strong> $${totalAmount.toFixed(2)}</p>
+                        </div>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${pdfUrl}" style="background: #2563eb; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 10px;">
+                                View Quotation PDF
+                            </a>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            You can also download the quotation PDF from the link above or accept/reject it through your client portal.
+                        </p>
+                        
+                        ${quotation.notes ? `
+                            <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                                <p style="margin: 0; color: #856404;"><strong>Notes:</strong> ${quotation.notes}</p>
+                            </div>
+                        ` : ''}
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            If you have any questions or would like to discuss this quotation, please don't hesitate to contact us.
+                        </p>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated message, please do not reply.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        // Attach PDF buffer if provided
+        if (pdfBuffer) {
+            mailOptions.attachments = [
+                {
+                    filename: `quotation-${quotationNumber}.pdf`,
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
+                }
+            ];
+        }
+
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
+                if (error) {
+                    console.error('Error sending quotation email:', error);
+                    reject(errorHandler(500, `Failed to send quotation email: ${error.message}`));
+                } else {
+                    console.log("Quotation email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
+
+    } catch (error: any) {
+        console.error('Error sending quotation email:', error);
+        throw errorHandler(500, `Failed to send quotation email: ${error.message}`);
+    }
+};
+

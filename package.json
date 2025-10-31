@@ -11,6 +11,8 @@
     "dev:mcp": "nodemon --exec tsx src/index.ts"
   },
   "devDependencies": {
+    "@types/pdfkit": "^0.17.3",
+    "@types/stream-buffers": "^3.0.8",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   },

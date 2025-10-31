@@ -1413,9 +1413,14 @@ export default router;
 
 **URL Parameter:** `quotationId` - The quotation ID
 
-**Response:** PDF file (binary)
-- Content-Type: `application/pdf`
-- Content-Disposition: `attachment; filename=quotation-QT-2025-0001.pdf`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation PDF generated successfully",
+  "pdfUrl": "https://res.cloudinary.com/your-cloud/raw/upload/v1234567890/sire-tech/quotations/quotation-QT-2025-0001.pdf"
+}
+```
 
 #### `POST /api/quotations/:quotationId/send`
 **Headers:** `Authorization: Bearer <admin_token>`

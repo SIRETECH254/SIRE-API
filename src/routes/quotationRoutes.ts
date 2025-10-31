@@ -7,7 +7,9 @@ import {
     deleteQuotation,
     acceptQuotation,
     rejectQuotation,
-    convertToInvoice
+    convertToInvoice,
+    generateQuotationPDFController,
+    sendQuotation
 } from '../controllers/quotationController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -127,12 +129,18 @@ const router = express.Router();
  */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createQuotation);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllQuotations);
-router.get('/:quotationId', authenticateToken, getQuotation);
-router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
-router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
+
+// Specific sub-routes must come before dynamic :quotationId route
 router.post('/:quotationId/accept', authenticateToken, acceptQuotation);
 router.post('/:quotationId/reject', authenticateToken, rejectQuotation);
 router.post('/:quotationId/convert-to-invoice', authenticateToken, authorizeRoles(['super_admin', 'finance']), convertToInvoice);
+router.post('/:quotationId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendQuotation);
+router.get('/:quotationId/pdf', authenticateToken, generateQuotationPDFController);
+
+// Dynamic routes come last
+router.get('/:quotationId', authenticateToken, getQuotation);
+router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
+router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
 
 export default router;
 
