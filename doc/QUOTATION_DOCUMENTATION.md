@@ -46,9 +46,8 @@ The SIRE Tech API Quotation Management System handles all quotation-related oper
 interface IQuotation {
   _id: string;
   quotationNumber: string;       // Auto-generated (QT-2025-0001)
-  client: ObjectId;              // Reference to Client
-  projectTitle: string;
-  projectDescription: string;
+  project: ObjectId;              // Reference to Project (required)
+  client: ObjectId;              // Reference to Client (inherited from project)
   items: Array<{
     description: string;         // Item description
     quantity: number;
@@ -69,6 +68,12 @@ interface IQuotation {
 }
 ```
 
+**Important Notes:**
+- `project` field is **required** - quotation must reference an existing project
+- `client` is automatically inherited from the project (not in request body)
+- Project title and description are accessed via the populated `project` reference
+- Workflow: **Project** (created first) → **Quotation** (created from project) → **Invoice** (created from quotation)
+
 ### Key Features
 - **Auto-numbering** - Sequential quotation numbers by year
 - **Client Association** - Linked to client record
@@ -85,9 +90,8 @@ interface IQuotation {
 ```typescript
 // Required fields
 quotationNumber: { required: true, unique: true }
-client: { required: true, ref: 'Client' }
-projectTitle: { required: true, maxlength: 200 }
-projectDescription: { required: true }
+project: { required: true, ref: 'Project' }  // Project reference is required
+client: { required: true, ref: 'Client' }    // Inherited from project
 items: { required: true, minlength: 1 }
 subtotal: { required: true, min: 0 }
 tax: { required: true, min: 0 }
@@ -117,21 +121,15 @@ const quotationSchema = new Schema<IQuotation>({
     unique: true,
     trim: true
   },
+  project: {
+    type: Schema.Types.ObjectId,
+    ref: 'Project',
+    required: [true, 'Project is required']
+  },
   client: {
     type: Schema.Types.ObjectId,
     ref: 'Client',
     required: [true, 'Client is required']
-  },
-  projectTitle: {
-    type: String,
-    required: [true, 'Project title is required'],
-    trim: true,
-    maxlength: [200, 'Title cannot exceed 200 characters']
-  },
-  projectDescription: {
-    type: String,
-    required: [true, 'Project description is required'],
-    trim: true
   },
   items: [{
     description: {
@@ -210,11 +208,13 @@ const quotationSchema = new Schema<IQuotation>({
 
 // Indexes for better performance
 // Note: quotationNumber index is already created by unique: true
+quotationSchema.index({ project: 1 });
 quotationSchema.index({ client: 1 });
 quotationSchema.index({ status: 1 });
 quotationSchema.index({ createdBy: 1 });
 quotationSchema.index({ validUntil: 1 });
 quotationSchema.index({ client: 1, status: 1 });
+quotationSchema.index({ project: 1, status: 1 });
 quotationSchema.index({ createdAt: -1 });
 
 // Pre-save middleware to generate quotation number
@@ -266,28 +266,33 @@ import { sendQuotationEmail } from '../services/external/emailService';
 ### Functions Overview
 
 #### `createQuotation(quotationData)`
-**Purpose:** Create new quotation (Admin only)
+**Purpose:** Create new quotation from project (Admin only)
 **Access:** Admin users (super_admin, finance)
 **Validation:**
-- Client existence check
+- Project existence check (required)
 - Items validation
 - Valid dates (validUntil in future)
 - Price calculations
 **Process:**
+- Validate project exists
+- Auto-inherit `client` from project
 - Generate unique quotation number
 - Calculate totals automatically
-- Save quotation
-- Optionally send to client
-**Response:** Complete quotation data
+- Save quotation and link to project
+- Update project's `quotation` field automatically
+**Response:** Complete quotation data with populated project
+
+**Important:** 
+- Project must exist before creating quotation
+- Only `project` ID is required in request body (not projectTitle/description)
+- Workflow: Project → Quotation → Invoice
 
 **Controller Implementation:**
 ```typescript
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { client, projectTitle, projectDescription, items, tax, discount, validUntil, notes }: {
-            client: string;
-            projectTitle: string;
-            projectDescription: string;
+        const { project, items, tax, discount, validUntil, notes }: {
+            project: string;
             items: Array<{
                 description: string;
                 quantity: number;
@@ -300,21 +305,21 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         } = req.body;
 
         // Validation
-        if (!client || !projectTitle || !projectDescription || !items || items.length === 0) {
-            return next(errorHandler(400, "Client, project title, description, and items are required"));
+        if (!project || !items || items.length === 0) {
+            return next(errorHandler(400, "Project and items are required"));
         }
 
-        // Check if client exists
-        const clientExists = await Client.findById(client);
-        if (!clientExists) {
-            return next(errorHandler(404, "Client not found"));
+        // Check if project exists
+        const projectExists = await Project.findById(project);
+        if (!projectExists) {
+            return next(errorHandler(404, "Project not found"));
         }
 
-        // Create quotation (totals will be calculated by pre-save middleware)
+        // Create quotation with project reference
+        // Client is inherited from project
         const quotation = new Quotation({
-            client,
-            projectTitle,
-            projectDescription,
+            project: projectExists._id,
+            client: projectExists.client,
             items,
             tax: tax || 0,
             discount: discount || 0,
@@ -325,7 +330,12 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 
         await quotation.save();
 
+        // Update project with quotation reference
+        projectExists.quotation = quotation._id as any;
+        await projectExists.save();
+
         // Populate references
+        await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
 
         res.status(201).json({
@@ -348,11 +358,11 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 **Access:** Admin users
 **Features:**
 - Pagination
-- Search by quotation number or project title
-- Filter by status, client
+- Search by quotation number
+- Filter by status, client, project
 - Date range filtering
 - Sort options
-- Population of client
+- Population of project and client
 **Response:** Paginated quotation list
 
 **Controller Implementation:**
@@ -363,11 +373,10 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
 
         const query: any = {};
 
-        // Search by quotation number or project title
+        // Search by quotation number
         if (search) {
             query.$or = [
-                { quotationNumber: { $regex: search, $options: 'i' } },
-                { projectTitle: { $regex: search, $options: 'i' } }
+                { quotationNumber: { $regex: search, $options: 'i' } }
             ];
         }
 
@@ -387,6 +396,7 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
         };
 
         const quotations = await Quotation.find(query)
+            .populate('project', 'title description projectNumber')
             .populate('client', 'firstName lastName email company')
             .populate('createdBy', 'firstName lastName email')
             .sort({ createdAt: 'desc' })
@@ -428,6 +438,7 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
+            .populate('project', 'title description projectNumber')
             .populate('client', 'firstName lastName email company phone')
             .populate('createdBy', 'firstName lastName email')
             .populate('convertedToInvoice');
@@ -454,10 +465,10 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 **Purpose:** Update quotation details
 **Access:** Admin only (before client acceptance)
 **Allowed Fields:**
-- projectTitle, projectDescription
 - items, tax, discount, notes
 - validUntil
-- Cannot update after acceptance
+- **Cannot change:** project reference (projectTitle/description are inherited from project)
+- **Cannot update after acceptance:** Only pending/sent quotations can be updated
 **Process:**
 - Validate status (only pending/sent can be updated)
 - Recalculate totals
@@ -469,9 +480,7 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 export const updateQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params;
-        const { projectTitle, projectDescription, items, tax, discount, validUntil, notes }: {
-            projectTitle?: string;
-            projectDescription?: string;
+        const { items, tax, discount, validUntil, notes }: {
             items?: Array<any>;
             tax?: number;
             discount?: number;
@@ -491,8 +500,8 @@ export const updateQuotation = async (req: Request, res: Response, next: NextFun
         }
 
         // Update allowed fields
-        if (projectTitle) quotation.projectTitle = projectTitle;
-        if (projectDescription) quotation.projectDescription = projectDescription;
+        // Note: project reference cannot be changed
+        // Project title/description are inherited from project reference
         if (items) quotation.items = items;
         if (tax !== undefined) quotation.tax = tax;
         if (discount !== undefined) quotation.discount = discount;
@@ -690,11 +699,15 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(400, "This quotation has already been converted to an invoice"));
         }
 
+        // Populate project to get title
+        await quotation.populate('project', 'title');
+        const projectTitle = quotation.project?.title || '';
+
         // Create invoice from quotation
         const invoice = new Invoice({
             client: quotation.client,
             quotation: quotation._id,
-            projectTitle: quotation.projectTitle,
+            projectTitle: projectTitle,
             items: quotation.items.map(item => ({
                 description: item.description,
                 quantity: item.quantity,
@@ -708,6 +721,15 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
         });
 
         await invoice.save();
+
+        // Update project with invoice reference
+        if (quotation.project) {
+            const project = await Project.findById(quotation.project);
+            if (project) {
+                project.invoice = invoice._id as any;
+                await project.save();
+            }
+        }
 
         // Update quotation
         quotation.status = 'converted';
@@ -1038,6 +1060,376 @@ router.post('/:quotationId/send', authenticateToken, authorizeRoles(['super_admi
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/quotations`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "project": "project_id_here",
+  "items": [
+    {
+      "description": "Frontend Development (React/Next.js)",
+      "quantity": 1,
+      "unitPrice": 5000
+    },
+    {
+      "description": "Backend API Development (Node.js/Express)",
+      "quantity": 1,
+      "unitPrice": 4000
+    },
+    {
+      "description": "Payment Gateway Integration",
+      "quantity": 1,
+      "unitPrice": 1500
+    }
+  ],
+  "tax": 1050,
+  "discount": 500,
+  "validUntil": "2025-12-31",
+  "notes": "Payment terms: 50% upfront, 50% on completion"
+}
+```
+
+**Note:** 
+- `project` is required (reference to existing project)
+- `client` is automatically inherited from the project
+- Project title and description are accessed via the populated `project` reference
+- The project's `quotation` field is automatically updated when quotation is created
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation created successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "quotationNumber": "QT-2025-0001",
+      "project": {
+        "_id": "...",
+        "title": "E-commerce Website Development",
+        "description": "Full-featured online store with payment integration",
+        "projectNumber": "PRJ-2025-0001"
+      },
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "company": "Example Corp"
+      },
+      "items": [...],
+      "subtotal": 10500,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 11050,
+      "status": "pending",
+      "validUntil": "2025-12-31T00:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/quotations`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by quotation number
+- `status` (optional): Filter by status (pending, sent, accepted, rejected, converted)
+- `client` (optional): Filter by client ID
+- `project` (optional): Filter by project ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotations": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalQuotations": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/stats`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "total": 100,
+      "byStatus": {
+        "pending": 10,
+        "sent": 30,
+        "accepted": 40,
+        "rejected": 10,
+        "converted": 10
+      },
+      "acceptanceRate": "66.67",
+      "conversionRate": "25.00"
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/client/:clientId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `clientId` - The client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotations": [
+      {
+        "_id": "...",
+        "quotationNumber": "QT-2025-0001",
+        "project": {
+          "_id": "...",
+          "title": "E-commerce Website Development",
+          "description": "Full-featured online store",
+          "projectNumber": "PRJ-2025-0001"
+        },
+        "status": "sent",
+        "totalAmount": 11050,
+        "validUntil": "2025-12-31T00:00:00.000Z",
+        "createdBy": {
+          "firstName": "Admin",
+          "lastName": "User",
+          "email": "admin@example.com"
+        }
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "quotationNumber": "QT-2025-0001",
+      "project": {
+        "_id": "...",
+        "title": "E-commerce Website Development",
+        "description": "Full project description",
+        "projectNumber": "PRJ-2025-0001"
+      },
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678",
+        "company": "Example Corp"
+      },
+      "items": [
+        {
+          "description": "Frontend Development",
+          "quantity": 1,
+          "unitPrice": 5000,
+          "total": 5000
+        }
+      ],
+      "subtotal": 10500,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 11050,
+      "status": "sent",
+      "validUntil": "2025-12-31T00:00:00.000Z",
+      "notes": "Payment terms: 50% upfront",
+      "createdBy": {...},
+      "convertedToInvoice": null,
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "items": [
+    {
+      "description": "Updated Item",
+      "quantity": 2,
+      "unitPrice": 3000
+    }
+  ],
+  "tax": 1200,
+  "discount": 600,
+  "validUntil": "2025-12-31",
+  "notes": "Updated notes"
+}
+```
+
+**Note:** Project reference cannot be changed. Project title/description are inherited from the project and cannot be updated via quotation.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation updated successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "totalAmount": 6600,
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation deleted successfully"
+}
+```
+
+#### `POST /api/quotations/:quotationId/accept`
+**Headers:** `Authorization: Bearer <client_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation accepted successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "status": "accepted",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/quotations/:quotationId/reject`
+**Headers:** `Authorization: Bearer <client_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "reason": "Budget constraints"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation rejected",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "status": "rejected",
+      "notes": "Rejection reason: Budget constraints",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/quotations/:quotationId/convert-to-invoice`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "dueDate": "2025-12-31"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation converted to invoice successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "invoiceNumber": "INV-2025-0001",
+      "client": {...},
+      "items": [...],
+      "totalAmount": 11050,
+      "dueDate": "2025-12-31T00:00:00.000Z",
+      "status": "draft",
+      ...
+    },
+    "quotation": {
+      "_id": "...",
+      "status": "converted",
+      "convertedToInvoice": "invoice_id_here",
+      ...
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/:quotationId/pdf`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:** PDF file (binary)
+- Content-Type: `application/pdf`
+- Content-Disposition: `attachment; filename=quotation-QT-2025-0001.pdf`
+
+#### `POST /api/quotations/:quotationId/send`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation sent successfully"
+}
+```
+
 ---
 
 ## 📝 API Examples
@@ -1048,9 +1440,7 @@ curl -X POST http://localhost:5000/api/quotations \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <admin_token>" \
   -d '{
-    "client": "client_id_here",
-    "projectTitle": "E-commerce Website Development",
-    "projectDescription": "Full-featured online store with payment integration",
+    "project": "project_id_here",
     "items": [
       {
         "description": "Frontend Development (React/Next.js)",
@@ -1074,6 +1464,11 @@ curl -X POST http://localhost:5000/api/quotations \
     "notes": "Payment terms: 50% upfront, 50% on completion"
   }'
 ```
+
+**Note:** 
+- `project` is required (reference to existing project)
+- `client` is automatically inherited from the project
+- Project must be created first before quotation
 
 ### Accept Quotation (Client)
 ```bash
@@ -1151,21 +1546,23 @@ curl -X POST http://localhost:5000/api/quotations/<quotationId>/send \
 
 ## 🔗 Integration with Other Modules
 
+### Project Integration
+- **Quotation requires project** - Project must exist before quotation creation
+- **Data inheritance** - Quotation inherits client and references project
+- **Automatic linking** - Project's `quotation` field is automatically updated when quotation is created
+- **Project details** - Project title and description are accessed via populated `project` reference
+- **Workflow:** Project → Quotation → Invoice
+
 ### Client Integration
-- Quotations linked to client records
+- **Automatic inheritance** - Client is automatically inherited from project (not in request body)
 - Client approval workflow
 - Email notifications
 
 ### Invoice Integration
-- Seamless conversion to invoices
-- Data inheritance
-- Reference linking
-- Line items transferred to invoice
-
-### Project Integration
-- Convert quotation to project
-- Track project origin
-- Link quotation for reference
+- **Seamless conversion** - Convert accepted quotations to invoices
+- **Data inheritance** - Invoice inherits project title from quotation's project
+- **Reference linking** - Project's `invoice` field is automatically updated when invoice is created
+- **Line items transfer** - All line items transferred from quotation to invoice
 
 ### Notification Integration
 - Email quotation delivery

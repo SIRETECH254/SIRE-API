@@ -1120,6 +1120,351 @@ router.post('/:invoiceId/send', authenticateToken, authorizeRoles(['super_admin'
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/invoices`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "client": "client_id_here",
+  "quotation": "quotation_id_here",
+  "projectTitle": "E-commerce Website Development",
+  "items": [
+    {
+      "description": "Frontend Development (React/Next.js)",
+      "quantity": 1,
+      "unitPrice": 5000
+    },
+    {
+      "description": "Backend API Development (Node.js/Express)",
+      "quantity": 1,
+      "unitPrice": 4000
+    }
+  ],
+  "tax": 1050,
+  "discount": 500,
+  "dueDate": "2025-12-31",
+  "notes": "Payment terms: Net 30"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice created successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "invoiceNumber": "INV-2025-0001",
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "company": "Example Corp"
+      },
+      "projectTitle": "E-commerce Website Development",
+      "items": [...],
+      "subtotal": 9000,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 9550,
+      "paidAmount": 0,
+      "status": "draft",
+      "dueDate": "2025-12-31T00:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/invoices`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by invoice number or project title
+- `status` (optional): Filter by status (draft, sent, paid, partially_paid, overdue, cancelled)
+- `client` (optional): Filter by client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoices": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalInvoices": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/invoices/stats`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "total": 100,
+      "byStatus": {
+        "draft": 5,
+        "sent": 30,
+        "paid": 40,
+        "partiallyPaid": 10,
+        "overdue": 10,
+        "cancelled": 5
+      },
+      "totalAmount": 500000,
+      "paidAmount": 350000,
+      "outstandingAmount": 150000
+    }
+  }
+}
+```
+
+#### `GET /api/invoices/overdue`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoices": [
+      {
+        "_id": "...",
+        "invoiceNumber": "INV-2025-0001",
+        "client": {...},
+        "totalAmount": 9550,
+        "paidAmount": 0,
+        "dueDate": "2025-01-15T00:00:00.000Z",
+        "status": "overdue"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/invoices/client/:clientId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `clientId` - The client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoices": [
+      {
+        "_id": "...",
+        "invoiceNumber": "INV-2025-0001",
+        "projectTitle": "E-commerce Website Development",
+        "status": "sent",
+        "totalAmount": 9550,
+        "paidAmount": 0,
+        "dueDate": "2025-12-31T00:00:00.000Z",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/invoices/:invoiceId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "invoiceNumber": "INV-2025-0001",
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678",
+        "company": "Example Corp"
+      },
+      "quotation": {...},
+      "projectTitle": "E-commerce Website Development",
+      "items": [
+        {
+          "description": "Frontend Development",
+          "quantity": 1,
+          "unitPrice": 5000,
+          "total": 5000
+        }
+      ],
+      "subtotal": 9000,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 9550,
+      "paidAmount": 0,
+      "status": "sent",
+      "dueDate": "2025-12-31T00:00:00.000Z",
+      "notes": "Payment terms: Net 30",
+      "createdBy": {...},
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/invoices/:invoiceId`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Body:**
+```json
+{
+  "projectTitle": "Updated Project Title",
+  "items": [
+    {
+      "description": "Updated Item",
+      "quantity": 2,
+      "unitPrice": 3000
+    }
+  ],
+  "tax": 1200,
+  "discount": 600,
+  "dueDate": "2025-12-31",
+  "notes": "Updated notes"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice updated successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "projectTitle": "Updated Project Title",
+      "totalAmount": 6600,
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/invoices/:invoiceId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice deleted successfully"
+}
+```
+
+#### `PATCH /api/invoices/:invoiceId/mark-paid`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice marked as paid successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "status": "paid",
+      "paidAmount": 9550,
+      "paidDate": "2025-01-01T00:00:00.000Z",
+      ...
+    }
+  }
+}
+```
+
+#### `PATCH /api/invoices/:invoiceId/mark-overdue`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice marked as overdue successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "status": "overdue",
+      ...
+    }
+  }
+}
+```
+
+#### `PATCH /api/invoices/:invoiceId/cancel`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice cancelled successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "status": "cancelled",
+      ...
+    }
+  }
+}
+```
+
+#### `GET /api/invoices/:invoiceId/pdf`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:** PDF file (binary)
+- Content-Type: `application/pdf`
+- Content-Disposition: `attachment; filename=invoice-INV-2025-0001.pdf`
+
+#### `POST /api/invoices/:invoiceId/send`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice sent successfully"
+}
+```
+
 ---
 
 ## 📝 API Examples

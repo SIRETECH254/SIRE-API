@@ -4,7 +4,7 @@ import type { IProject } from '../types/index';
 const projectSchema = new Schema<IProject>({
   projectNumber: {
     type: String,
-    required: [true, 'Project number is required'],
+    required: false, // Will be auto-generated, not required in request
     unique: true,
     trim: true
   },
@@ -142,10 +142,21 @@ projectSchema.index({ client: 1, status: 1 });
 
 // Pre-save middleware to generate project number
 projectSchema.pre('save', async function(next) {
-  if (!(this as any).projectNumber) {
-    const year = new Date().getFullYear();
-    const count = await mongoose.model('Project').countDocuments();
-    (this as any).projectNumber = `PRJ-${year}-${String(count + 1).padStart(4, '0')}`;
+  // Only generate if projectNumber is not already set
+  if (!(this as any).projectNumber || (this as any).projectNumber.trim() === '') {
+    try {
+      const year = new Date().getFullYear();
+      // Count existing projects for this year to ensure uniqueness
+      const existingProjects = await mongoose.model('Project').countDocuments({
+        projectNumber: new RegExp(`^PRJ-${year}-`)
+      });
+      (this as any).projectNumber = `PRJ-${year}-${String(existingProjects + 1).padStart(4, '0')}`;
+    } catch (error) {
+      // If counting fails, use timestamp-based fallback
+      const year = new Date().getFullYear();
+      const timestamp = Date.now().toString().slice(-6);
+      (this as any).projectNumber = `PRJ-${year}-${timestamp}`;
+    }
   }
   next();
 });

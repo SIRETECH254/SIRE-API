@@ -148,9 +148,8 @@ export interface IService extends Document {
 export interface IQuotation extends Document {
   _id: string;
   quotationNumber: string;
+  project: Types.ObjectId; // Reference to Project
   client: Types.ObjectId; // Reference to Client
-  projectTitle: string;
-  projectDescription: string;
   items: Array<{
     description: string;
     quantity: number;
