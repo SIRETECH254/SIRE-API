@@ -4,6 +4,7 @@ import { errorHandler } from '../middleware/errorHandler';
 import Project from '../models/Project';
 import Client from '../models/Client';
 import User from '../models/User';
+import Service from '../models/Service';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 
 // @desc    Create new project
@@ -11,17 +12,15 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 // @access  Private (Admin, Project Manager)
 export const createProject = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { title, description, client, quotation, invoice, services, priority, assignedTo, startDate, endDate, notes }: {
+        const { title, description, client, services, priority, assignedTo, startDate, endDate, notes }: {
             title: string;
             description: string;
             client: string;
-            quotation?: string;
-            invoice?: string;
             services?: string[];
             priority?: 'low' | 'medium' | 'high' | 'urgent';
             assignedTo?: string[];
-            startDate?: Date;
-            endDate?: Date;
+            startDate?: string | Date;
+            endDate?: string | Date;
             notes?: string;
         } = req.body;
 
@@ -30,26 +29,65 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "Title, description, and client are required"));
         }
 
+        // Validate createdBy exists
+        if (!req.user?._id) {
+            return next(errorHandler(401, "User authentication required"));
+        }
+
         // Check if client exists
         const clientExists = await Client.findById(client);
         if (!clientExists) {
             return next(errorHandler(404, "Client not found"));
         }
 
+        // Validate assignedTo users exist
+        if (assignedTo && assignedTo.length > 0) {
+            const usersExist = await User.find({ _id: { $in: assignedTo } });
+            if (usersExist.length !== assignedTo.length) {
+                return next(errorHandler(404, "One or more assigned users not found"));
+            }
+        }
+
+        // Validate services exist
+        if (services && services.length > 0) {
+            const servicesExist = await Service.find({ _id: { $in: services } });
+            if (servicesExist.length !== services.length) {
+                return next(errorHandler(404, "One or more services not found"));
+            }
+        }
+
+        // Parse dates if provided as strings
+        let parsedStartDate: Date | undefined;
+        let parsedEndDate: Date | undefined;
+        
+        if (startDate) {
+            parsedStartDate = typeof startDate === 'string' ? new Date(startDate) : startDate;
+            if (isNaN(parsedStartDate.getTime())) {
+                return next(errorHandler(400, "Invalid startDate format"));
+            }
+        }
+        
+        if (endDate) {
+            parsedEndDate = typeof endDate === 'string' ? new Date(endDate) : endDate;
+            if (isNaN(parsedEndDate.getTime())) {
+                return next(errorHandler(400, "Invalid endDate format"));
+            }
+        }
+
         // Create project
+        // Note: quotation and invoice are NOT in request body
+        // They will be set automatically when quotation/invoice is created
         const project = new Project({
             title,
             description,
             client,
-            quotation,
-            invoice,
             services: services || [],
             priority: priority || 'medium',
             assignedTo: assignedTo || [],
-            startDate,
-            endDate,
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
             notes,
-            createdBy: req.user?._id
+            createdBy: req.user._id
         });
 
         await project.save();
@@ -78,7 +116,26 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
 
     } catch (error: any) {
         console.error('Create project error:', error);
-        next(errorHandler(500, "Server error while creating project"));
+        
+        // Handle Mongoose validation errors
+        if (error.name === 'ValidationError') {
+            const errors = Object.values(error.errors).map((err: any) => err.message).join(', ');
+            return next(errorHandler(400, `Validation error: ${errors}`));
+        }
+        
+        // Handle duplicate key errors
+        if (error.code === 11000) {
+            return next(errorHandler(409, "Project with this number already exists"));
+        }
+        
+        // Handle cast errors (invalid ObjectId)
+        if (error.name === 'CastError') {
+            return next(errorHandler(400, `Invalid ID format: ${error.message}`));
+        }
+        
+        // Return specific error message if available
+        const errorMessage = error.message || "Server error while creating project";
+        next(errorHandler(500, errorMessage));
     }
 };
 

@@ -8,21 +8,15 @@ const quotationSchema = new Schema<IQuotation>({
     unique: true,
     trim: true
   },
+  project: {
+    type: Schema.Types.ObjectId,
+    ref: 'Project',
+    required: [true, 'Project is required']
+  },
   client: {
     type: Schema.Types.ObjectId,
     ref: 'Client',
     required: [true, 'Client is required']
-  },
-  projectTitle: {
-    type: String,
-    required: [true, 'Project title is required'],
-    trim: true,
-    maxlength: [200, 'Title cannot exceed 200 characters']
-  },
-  projectDescription: {
-    type: String,
-    required: [true, 'Project description is required'],
-    trim: true
   },
   items: [{
     description: {
@@ -99,11 +93,13 @@ const quotationSchema = new Schema<IQuotation>({
   timestamps: true
 });
 
+quotationSchema.index({ project: 1 });
 quotationSchema.index({ client: 1 });
 quotationSchema.index({ status: 1 });
 quotationSchema.index({ createdBy: 1 });
 quotationSchema.index({ validUntil: 1 });
 quotationSchema.index({ client: 1, status: 1 });
+quotationSchema.index({ project: 1, status: 1 });
 quotationSchema.index({ createdAt: -1 });
 
 quotationSchema.pre('save', async function(next) {

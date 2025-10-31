@@ -48,8 +48,8 @@ interface IProject {
   title: string;
   description: string;
   client: ObjectId;              // Reference to Client
-  quotation?: ObjectId;          // Reference to Quotation
-  invoice?: ObjectId;            // Reference to Invoice
+  quotation?: ObjectId;          // Reference to Quotation (auto-set when quotation created)
+  invoice?: ObjectId;            // Reference to Invoice (auto-set when invoice created)
   services: ObjectId[];          // References to Services
   status: 'pending' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
   priority: 'low' | 'medium' | 'high' | 'urgent';
@@ -77,6 +77,11 @@ interface IProject {
   updatedAt: Date;
 }
 ```
+
+**Important Notes:**
+- `quotation` and `invoice` fields are **NOT** included in the request body when creating a project
+- They are automatically set when quotations/invoices are created for the project
+- The workflow is: **Project → Quotation → Invoice**
 
 ### Key Features
 - **Auto-numbering** - Unique project numbers generated automatically
@@ -310,19 +315,22 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 - Generate unique project number
 - Validate client and services
 - Create project record
+- **Note:** `quotation` and `invoice` are NOT in request body - they are set automatically when quotation/invoice is created
 - Emit Socket.io event for real-time update
 **Response:** Complete project data
+
+**Important:** 
+- Projects must be created first before quotations
+- Workflow: Project → Quotation → Invoice
 
 **Controller Implementation:**
 ```typescript
 export const createProject = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { title, description, client, quotation, invoice, services, priority, assignedTo, startDate, endDate, notes }: {
+        const { title, description, client, services, priority, assignedTo, startDate, endDate, notes }: {
             title: string;
             description: string;
             client: string;
-            quotation?: string;
-            invoice?: string;
             services?: string[];
             priority?: 'low' | 'medium' | 'high' | 'urgent';
             assignedTo?: string[];
@@ -343,12 +351,12 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         }
 
         // Create project
+        // Note: quotation and invoice are NOT in request body
+        // They will be set automatically when quotation/invoice is created
         const project = new Project({
             title,
             description,
             client,
-            quotation,
-            invoice,
             services: services || [],
             priority: priority || 'medium',
             assignedTo: assignedTo || [],
@@ -1289,8 +1297,6 @@ export default router;
   "title": "E-commerce Website Development",
   "description": "Build a full-featured e-commerce platform with payment integration",
   "client": "client_id_here",
-  "quotation": "quotation_id_here",
-  "invoice": "invoice_id_here",
   "services": ["service_id_1", "service_id_2"],
   "priority": "high",
   "assignedTo": ["user_id_1", "user_id_2"],
@@ -1299,6 +1305,8 @@ export default router;
   "notes": "Special requirements: Mobile-first design"
 }
 ```
+
+**Note:** `quotation` and `invoice` are **NOT** included in the request body. They are automatically set when quotations/invoices are created for this project.
 
 **Response:**
 ```json
@@ -1850,9 +1858,10 @@ curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
 - Auto-populate client details
 
 ### Quotation Integration
-- Convert quotation to project
-- Link quotation for reference
-- Inherit services from quotation
+- **Quotation created from project** - Project must exist before quotation
+- **Automatic linking** - Project's `quotation` field is automatically updated when quotation is created
+- **Data inheritance** - Quotation inherits client from project
+- **Workflow:** Project → Quotation → Invoice
 
 ### Invoice Integration
 - Link invoice to project

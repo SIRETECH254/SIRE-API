@@ -3,13 +3,12 @@ import { errorHandler } from '../middleware/errorHandler';
 import Quotation from '../models/Quotation';
 import Client from '../models/Client';
 import Invoice from '../models/Invoice';
+import Project from '../models/Project';
 
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { client, projectTitle, projectDescription, items, tax, discount, validUntil, notes }: {
-            client: string;
-            projectTitle: string;
-            projectDescription: string;
+        const { project, items, tax, discount, validUntil, notes }: {
+            project: string;
             items: Array<{ description: string; quantity: number; unitPrice: number; }>;
             tax?: number;
             discount?: number;
@@ -17,19 +16,21 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
             notes?: string;
         } = req.body;
 
-        if (!client || !projectTitle || !projectDescription || !items || items.length === 0) {
-            return next(errorHandler(400, "Client, project title, description, and items are required"));
+        if (!project || !items || items.length === 0) {
+            return next(errorHandler(400, "Project and items are required"));
         }
 
-        const clientExists = await Client.findById(client);
-        if (!clientExists) {
-            return next(errorHandler(404, "Client not found"));
+        // Check if project exists
+        const projectExists = await Project.findById(project);
+        if (!projectExists) {
+            return next(errorHandler(404, "Project not found"));
         }
 
+        // Create quotation with project reference
+        // Client is inherited from project
         const quotation = new Quotation({
-            client,
-            projectTitle,
-            projectDescription,
+            project: projectExists._id,
+            client: projectExists.client,
             items,
             tax: tax || 0,
             discount: discount || 0,
@@ -39,6 +40,13 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         });
 
         await quotation.save();
+
+        // Update project with quotation reference
+        projectExists.quotation = quotation._id as any;
+        await projectExists.save();
+
+        // Populate references
+        await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
 
         res.status(201).json({
@@ -55,14 +63,13 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 
 export const getAllQuotations = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { page = 1, limit = 10, search, status, client } = req.query as any;
+        const { page = 1, limit = 10, search, status, client, project } = req.query as any;
 
         const query: any = {};
 
         if (search) {
             query.$or = [
-                { quotationNumber: { $regex: search, $options: 'i' } },
-                { projectTitle: { $regex: search, $options: 'i' } }
+                { quotationNumber: { $regex: search, $options: 'i' } }
             ];
         }
 
@@ -74,9 +81,14 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
             query.client = client;
         }
 
+        if (project) {
+            query.project = project;
+        }
+
         const options = { page: parseInt(page), limit: parseInt(limit) };
 
         const quotations = await Quotation.find(query)
+            .populate('project', 'title description projectNumber')
             .populate('client', 'firstName lastName email company')
             .populate('createdBy', 'firstName lastName email')
             .sort({ createdAt: 'desc' })
@@ -110,6 +122,7 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
         const { quotationId } = req.params as any;
 
         const quotation = await Quotation.findById(quotationId)
+            .populate('project', 'title description projectNumber')
             .populate('client', 'firstName lastName email company phone')
             .populate('createdBy', 'firstName lastName email')
             .populate('convertedToInvoice');
@@ -129,7 +142,7 @@ export const getQuotation = async (req: Request, res: Response, next: NextFuncti
 export const updateQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params as any;
-        const { projectTitle, projectDescription, items, tax, discount, validUntil, notes } = req.body as any;
+        const { items, tax, discount, validUntil, notes } = req.body as any;
 
         const quotation = await Quotation.findById(quotationId);
         if (!quotation) {
@@ -140,8 +153,8 @@ export const updateQuotation = async (req: Request, res: Response, next: NextFun
             return next(errorHandler(400, "Cannot update an accepted or converted quotation"));
         }
 
-        if (projectTitle) quotation.projectTitle = projectTitle;
-        if (projectDescription) quotation.projectDescription = projectDescription;
+        // Note: project reference cannot be changed
+        // projectTitle and projectDescription are inherited from project
         if (items) quotation.items = items;
         if (tax !== undefined) quotation.tax = tax;
         if (discount !== undefined) quotation.discount = discount;
@@ -255,10 +268,14 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(400, "This quotation has already been converted to an invoice"));
         }
 
+        // Populate project to get title
+        await quotation.populate('project', 'title');
+        const projectTitle = (quotation.project as any)?.title || '';
+
         const invoice = new Invoice({
             client: quotation.client,
             quotation: quotation._id,
-            projectTitle: quotation.projectTitle,
+            projectTitle: projectTitle,
             items: quotation.items.map((i: any) => ({
                 description: i.description,
                 quantity: i.quantity,
@@ -272,6 +289,15 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
         });
 
         await invoice.save();
+
+        // Update project with invoice reference
+        if (quotation.project) {
+            const project = await Project.findById(quotation.project);
+            if (project) {
+                project.invoice = invoice._id as any;
+                await project.save();
+            }
+        }
 
         quotation.status = 'converted';
         quotation.convertedToInvoice = invoice._id as any;
