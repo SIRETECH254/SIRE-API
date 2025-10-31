@@ -192,10 +192,10 @@ export const generateQuotationPDF = async (quotation: any): Promise<Buffer> => {
                 resolve(buffer);
             });
 
-            stream.on('error', (error) => {
+            stream.on('error', (error: Error) => {
                 reject(error);
             });
-        } catch (error) {
+        } catch (error: any) {
             reject(error);
         }
     });
