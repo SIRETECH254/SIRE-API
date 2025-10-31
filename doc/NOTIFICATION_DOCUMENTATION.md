@@ -1034,6 +1034,317 @@ router.post('/bulk', authenticateToken, authorizeRoles(['super_admin']), sendBul
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/notifications`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "recipient": "user_id_here",
+  "recipientModel": "User",
+  "type": "in_app",
+  "category": "project",
+  "subject": "Project Update",
+  "message": "Your project status has been updated to 'In Progress'",
+  "metadata": {
+    "projectId": "project_id_here"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification sent successfully",
+  "data": {
+    "notification": {
+      "_id": "...",
+      "recipient": "...",
+      "recipientModel": "User",
+      "type": "in_app",
+      "category": "project",
+      "subject": "Project Update",
+      "message": "Your project status has been updated to 'In Progress'",
+      "status": "sent",
+      "sentAt": "2025-01-01T00:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/notifications`
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `category` (optional): Filter by category (invoice, payment, project, quotation, general)
+- `type` (optional): Filter by type (email, sms, push, in_app)
+- `status` (optional): Filter by status (pending, sent, failed)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalNotifications": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/notifications/unread-count`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "unreadCount": 5
+  }
+}
+```
+
+#### `GET /api/notifications/unread`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "_id": "...",
+        "subject": "Invoice Payment Due",
+        "message": "Your invoice INV-2025-0001 is due in 3 days",
+        "category": "invoice",
+        "readAt": null,
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/notifications/category/:category`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `category` - The notification category (invoice, payment, project, quotation, general)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "_id": "...",
+        "subject": "Invoice Payment Due",
+        "category": "invoice",
+        "readAt": null,
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/notifications/:notificationId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `notificationId` - The notification ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notification": {
+      "_id": "...",
+      "recipient": {...},
+      "recipientModel": "User",
+      "type": "in_app",
+      "category": "project",
+      "subject": "Project Update",
+      "message": "Your project status has been updated to 'In Progress'",
+      "status": "sent",
+      "sentAt": "2025-01-01T00:00:00.000Z",
+      "readAt": null,
+      "metadata": {
+        "projectId": "project_id_here"
+      },
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PATCH /api/notifications/:notificationId/read`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `notificationId` - The notification ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification marked as read",
+  "data": {
+    "notification": {
+      "_id": "...",
+      "readAt": "2025-01-01T00:00:00.000Z",
+      ...
+    }
+  }
+}
+```
+
+#### `PATCH /api/notifications/read-all`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "All notifications marked as read",
+  "data": {
+    "updatedCount": 10
+  }
+}
+```
+
+#### `DELETE /api/notifications/:notificationId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `notificationId` - The notification ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification deleted successfully"
+}
+```
+
+#### `POST /api/notifications/invoice-reminder`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "invoiceId": "invoice_id_here"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Invoice reminder sent successfully",
+  "data": {
+    "notification": {
+      "_id": "...",
+      "subject": "Invoice Payment Reminder",
+      "category": "invoice",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/notifications/payment-confirmation`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "paymentId": "payment_id_here"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Payment confirmation sent successfully",
+  "data": {
+    "notification": {
+      "_id": "...",
+      "subject": "Payment Confirmation",
+      "category": "payment",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/notifications/project-update`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "projectId": "project_id_here",
+  "message": "Project status updated to 'In Progress'"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project update notification sent successfully",
+  "data": {
+    "notification": {
+      "_id": "...",
+      "subject": "Project Update",
+      "category": "project",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/notifications/bulk`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Body:**
+```json
+{
+  "recipients": ["user_id_1", "user_id_2", "user_id_3"],
+  "recipientModel": "User",
+  "type": "email",
+  "category": "general",
+  "subject": "System Maintenance",
+  "message": "System will be under maintenance on January 5, 2025"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Bulk notification sent successfully",
+  "data": {
+    "sentCount": 3,
+    "failedCount": 0,
+    "notifications": [...]
+  }
+}
+```
+
 ---
 
 ## 📧 Notification Services

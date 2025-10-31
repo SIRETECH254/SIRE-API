@@ -1278,6 +1278,465 @@ router.delete('/:projectId/attachments/:attachmentId', authenticateToken, delete
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/projects`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "title": "E-commerce Website Development",
+  "description": "Build a full-featured e-commerce platform with payment integration",
+  "client": "client_id_here",
+  "quotation": "quotation_id_here",
+  "invoice": "invoice_id_here",
+  "services": ["service_id_1", "service_id_2"],
+  "priority": "high",
+  "assignedTo": ["user_id_1", "user_id_2"],
+  "startDate": "2025-11-01",
+  "endDate": "2025-12-31",
+  "notes": "Special requirements: Mobile-first design"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project created successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "projectNumber": "PRJ-2025-0001",
+      "title": "E-commerce Website Development",
+      "description": "Build a full-featured e-commerce platform with payment integration",
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "company": "Example Corp"
+      },
+      "status": "pending",
+      "priority": "high",
+      "progress": 0,
+      "assignedTo": [...],
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/projects`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by title or project number
+- `status` (optional): Filter by status (pending, in_progress, on_hold, completed, cancelled)
+- `priority` (optional): Filter by priority (low, medium, high, urgent)
+- `client` (optional): Filter by client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "projects": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalProjects": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/projects/stats`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "total": 100,
+      "byStatus": {
+        "pending": 20,
+        "inProgress": 45,
+        "onHold": 5,
+        "completed": 25,
+        "cancelled": 5
+      },
+      "byPriority": {
+        "low": 10,
+        "medium": 40,
+        "high": 35,
+        "urgent": 15
+      },
+      "completionRate": "25.00"
+    }
+  }
+}
+```
+
+#### `GET /api/projects/assigned`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "projects": [
+      {
+        "_id": "...",
+        "projectNumber": "PRJ-2025-0001",
+        "title": "E-commerce Website Development",
+        "client": {
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john@example.com"
+        },
+        "status": "in_progress",
+        "priority": "high",
+        "progress": 65
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/projects/client/:clientId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `clientId` - The client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "projects": [
+      {
+        "_id": "...",
+        "projectNumber": "PRJ-2025-0001",
+        "title": "E-commerce Website Development",
+        "status": "in_progress",
+        "progress": 65,
+        "assignedTo": [...],
+        "services": [...]
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/projects/:projectId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "project": {
+      "_id": "...",
+      "projectNumber": "PRJ-2025-0001",
+      "title": "E-commerce Website Development",
+      "description": "Full project description",
+      "client": {
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678"
+      },
+      "quotation": {...},
+      "invoice": {...},
+      "services": [...],
+      "status": "in_progress",
+      "priority": "high",
+      "assignedTo": [...],
+      "progress": 65,
+      "milestones": [...],
+      "attachments": [...],
+      "startDate": "2025-11-01",
+      "endDate": "2025-12-31",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/projects/:projectId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:**
+```json
+{
+  "title": "Updated Project Title",
+  "description": "Updated description",
+  "status": "in_progress",
+  "priority": "urgent",
+  "startDate": "2025-11-01",
+  "endDate": "2025-12-31",
+  "notes": "Updated notes"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project updated successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "title": "Updated Project Title",
+      "status": "in_progress",
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/projects/:projectId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project deleted successfully"
+}
+```
+
+#### `POST /api/projects/:projectId/assign`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:**
+```json
+{
+  "userIds": ["user_id_1", "user_id_2", "user_id_3"]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Team members assigned successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "assignedTo": [
+        {
+          "_id": "user_id_1",
+          "firstName": "Jane",
+          "lastName": "Smith",
+          "email": "jane@example.com",
+          "avatar": "https://..."
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `PATCH /api/projects/:projectId/status`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:**
+```json
+{
+  "status": "in_progress"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project status updated successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "status": "in_progress",
+      ...
+    }
+  }
+}
+```
+
+#### `PATCH /api/projects/:projectId/progress`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:**
+```json
+{
+  "progress": 75
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Project progress updated successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "progress": 75,
+      "status": "in_progress",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/projects/:projectId/milestones`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:**
+```json
+{
+  "title": "Frontend Development Complete",
+  "description": "Complete all frontend pages and components",
+  "dueDate": "2025-11-15"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Milestone added successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "milestones": [
+        {
+          "_id": "...",
+          "title": "Frontend Development Complete",
+          "description": "Complete all frontend pages and components",
+          "dueDate": "2025-11-15T00:00:00.000Z",
+          "status": "pending"
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `PUT /api/projects/:projectId/milestones/:milestoneId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameters:** 
+- `projectId` - The project ID
+- `milestoneId` - The milestone ID
+
+**Body:**
+```json
+{
+  "title": "Updated Milestone Title",
+  "description": "Updated description",
+  "dueDate": "2025-11-20",
+  "status": "completed"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Milestone updated successfully",
+  "data": {
+    "project": {
+      "_id": "...",
+      "milestones": [...]
+    }
+  }
+}
+```
+
+#### `DELETE /api/projects/:projectId/milestones/:milestoneId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameters:** 
+- `projectId` - The project ID
+- `milestoneId` - The milestone ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Milestone deleted successfully"
+}
+```
+
+#### `POST /api/projects/:projectId/attachments`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `projectId` - The project ID
+
+**Body:** `multipart/form-data`
+- `file`: File to upload
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Attachment uploaded successfully",
+  "data": {
+    "attachment": {
+      "_id": "...",
+      "name": "document.pdf",
+      "url": "https://cloudinary.com/...",
+      "uploadedBy": {
+        "_id": "...",
+        "firstName": "Jane",
+        "lastName": "Smith"
+      },
+      "uploadedAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `DELETE /api/projects/:projectId/attachments/:attachmentId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameters:** 
+- `projectId` - The project ID
+- `attachmentId` - The attachment ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Attachment deleted successfully"
+}
+```
+
 ---
 
 ## 📝 API Examples

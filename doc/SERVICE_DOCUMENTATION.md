@@ -624,6 +624,226 @@ router.post('/:serviceId/icon', authenticateToken, authorizeRoles(['super_admin'
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/services`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "title": "Web Development",
+  "description": "Full-stack web application development using modern technologies",
+  "features": [
+    "Responsive Design",
+    "Database Integration",
+    "API Development",
+    "Security Implementation",
+    "Performance Optimization"
+  ],
+  "isActive": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service created successfully",
+  "data": {
+    "service": {
+      "_id": "...",
+      "title": "Web Development",
+      "description": "Full-stack web application development using modern technologies",
+      "features": [
+        "Responsive Design",
+        "Database Integration",
+        "API Development",
+        "Security Implementation",
+        "Performance Optimization"
+      ],
+      "isActive": true,
+      "icon": null,
+      "createdBy": {...},
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/services`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by title or description
+- `isActive` (optional): Filter by active status (true/false)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "services": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalServices": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/services/active`
+**Headers:** Not required (Public endpoint)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "services": [
+      {
+        "_id": "...",
+        "title": "Web Development",
+        "description": "Full-stack web application development",
+        "features": [...],
+        "isActive": true,
+        "icon": "https://cloudinary.com/..."
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/services/:serviceId`
+**Headers:** Not required (Public endpoint)
+
+**URL Parameter:** `serviceId` - The service ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "service": {
+      "_id": "...",
+      "title": "Web Development",
+      "description": "Full-stack web application development using modern technologies",
+      "features": [
+        "Responsive Design",
+        "Database Integration",
+        "API Development"
+      ],
+      "isActive": true,
+      "icon": "https://cloudinary.com/...",
+      "createdBy": {
+        "_id": "...",
+        "firstName": "Admin",
+        "lastName": "User",
+        "email": "admin@example.com"
+      },
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/services/:serviceId`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `serviceId` - The service ID
+
+**Body:**
+```json
+{
+  "title": "Updated Service Title",
+  "description": "Updated description",
+  "features": [
+    "New Feature 1",
+    "New Feature 2"
+  ],
+  "isActive": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service updated successfully",
+  "data": {
+    "service": {
+      "_id": "...",
+      "title": "Updated Service Title",
+      "description": "Updated description",
+      "features": [...],
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/services/:serviceId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `serviceId` - The service ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service deleted successfully"
+}
+```
+
+#### `PATCH /api/services/:serviceId/toggle-status`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `serviceId` - The service ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service status updated successfully",
+  "data": {
+    "service": {
+      "_id": "...",
+      "isActive": false,
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/services/:serviceId/icon`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `serviceId` - The service ID
+
+**Body:** `multipart/form-data`
+- `icon`: Image file to upload
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service icon uploaded successfully",
+  "data": {
+    "service": {
+      "_id": "...",
+      "icon": "https://cloudinary.com/sire-tech/service-icons/...",
+      ...
+    }
+  }
+}
+```
+
 ---
 
 ## 📝 API Examples

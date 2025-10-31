@@ -1123,6 +1123,364 @@ router.post('/:paymentId/refund', authenticateToken, authorizeRoles(['super_admi
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/payments`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "invoice": "invoice_id_here",
+  "client": "client_id_here",
+  "amount": 9550,
+  "paymentMethod": "cash",
+  "paymentDate": "2025-01-01",
+  "reference": "REF-001",
+  "notes": "Cash payment received"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Payment created successfully",
+  "data": {
+    "payment": {
+      "_id": "...",
+      "paymentNumber": "PAY-2025-0001",
+      "invoice": {...},
+      "client": {...},
+      "amount": 9550,
+      "paymentMethod": "cash",
+      "status": "completed",
+      "reference": "REF-001",
+      "paymentDate": "2025-01-01T00:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/payments`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by payment number or reference
+- `status` (optional): Filter by status (pending, completed, failed, refunded)
+- `paymentMethod` (optional): Filter by payment method (mpesa, bank_transfer, stripe, paypal, cash)
+- `client` (optional): Filter by client ID
+- `invoice` (optional): Filter by invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payments": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalPayments": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/payments/stats`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "total": 100,
+      "totalAmount": 500000,
+      "byStatus": {
+        "pending": 5,
+        "completed": 85,
+        "failed": 8,
+        "refunded": 2
+      },
+      "byMethod": {
+        "mpesa": 50,
+        "bank_transfer": 20,
+        "stripe": 15,
+        "paypal": 10,
+        "cash": 5
+      }
+    }
+  }
+}
+```
+
+#### `POST /api/payments/mpesa/initiate`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "invoice": "invoice_id_here",
+  "amount": 9550,
+  "phone": "+254712345678"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "M-Pesa payment initiated successfully",
+  "data": {
+    "payment": {
+      "_id": "...",
+      "paymentNumber": "PAY-2025-0001",
+      "status": "pending",
+      "merchantRequestId": "...",
+      "checkoutRequestId": "..."
+    },
+    "mpesaResponse": {
+      "merchantRequestId": "...",
+      "checkoutRequestId": "...",
+      "responseCode": "0",
+      "responseDescription": "Success. Request accepted for processing"
+    }
+  }
+}
+```
+
+#### `POST /api/payments/mpesa/callback`
+**Headers:** Not required (Public webhook endpoint)
+
+**Body:** (Raw webhook payload from M-Pesa)
+```json
+{
+  "Body": {
+    "stkCallback": {
+      "MerchantRequestID": "...",
+      "CheckoutRequestID": "...",
+      "ResultCode": 0,
+      "ResultDesc": "The service request is processed successfully.",
+      "CallbackMetadata": {
+        "Item": [
+          {"Name": "Amount", "Value": 9550},
+          {"Name": "MpesaReceiptNumber", "Value": "..."},
+          {"Name": "TransactionDate", "Value": "20250101120000"},
+          {"Name": "PhoneNumber", "Value": 254712345678}
+        ]
+      }
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "ResultCode": 0,
+  "ResultDesc": "Accepted"
+}
+```
+
+#### `POST /api/payments/stripe/initiate`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "invoice": "invoice_id_here",
+  "amount": 9550,
+  "email": "client@example.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Stripe payment initiated successfully",
+  "data": {
+    "payment": {
+      "_id": "...",
+      "paymentNumber": "PAY-2025-0001",
+      "status": "pending",
+      "reference": "..."
+    },
+    "authorizationUrl": "https://checkout.stripe.com/..."
+  }
+}
+```
+
+#### `POST /api/payments/stripe/webhook`
+**Headers:** Not required (Public webhook endpoint)
+
+**Body:** (Raw webhook payload from Stripe)
+
+**Response:** HTTP 200 OK
+
+#### `GET /api/payments/client/:clientId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `clientId` - The client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payments": [
+      {
+        "_id": "...",
+        "paymentNumber": "PAY-2025-0001",
+        "invoice": {...},
+        "amount": 9550,
+        "paymentMethod": "mpesa",
+        "status": "completed",
+        "paymentDate": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/payments/invoice/:invoiceId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `invoiceId` - The invoice ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payments": [
+      {
+        "_id": "...",
+        "paymentNumber": "PAY-2025-0001",
+        "amount": 9550,
+        "paymentMethod": "mpesa",
+        "status": "completed",
+        "paymentDate": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/payments/:paymentId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `paymentId` - The payment ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "payment": {
+      "_id": "...",
+      "paymentNumber": "PAY-2025-0001",
+      "invoice": {
+        "_id": "...",
+        "invoiceNumber": "INV-2025-0001",
+        "totalAmount": 9550
+      },
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com"
+      },
+      "amount": 9550,
+      "paymentMethod": "mpesa",
+      "status": "completed",
+      "transactionId": "...",
+      "reference": "REF-001",
+      "paymentDate": "2025-01-01T00:00:00.000Z",
+      "notes": "Payment notes",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/payments/:paymentId`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `paymentId` - The payment ID
+
+**Body:**
+```json
+{
+  "amount": 10000,
+  "paymentDate": "2025-01-02",
+  "reference": "REF-002",
+  "notes": "Updated notes"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Payment updated successfully",
+  "data": {
+    "payment": {
+      "_id": "...",
+      "amount": 10000,
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/payments/:paymentId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `paymentId` - The payment ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Payment deleted successfully"
+}
+```
+
+#### `POST /api/payments/:paymentId/refund`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `paymentId` - The payment ID
+
+**Body:**
+```json
+{
+  "reason": "Client requested refund"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Payment refunded successfully",
+  "data": {
+    "payment": {
+      "_id": "...",
+      "status": "refunded",
+      ...
+    }
+  }
+}
+```
+
 ---
 
 ## 💳 Payment Gateway Integration

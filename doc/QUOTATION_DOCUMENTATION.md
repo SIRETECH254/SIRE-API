@@ -1038,6 +1038,359 @@ router.post('/:quotationId/send', authenticateToken, authorizeRoles(['super_admi
 export default router;
 ```
 
+### Route Details
+
+#### `POST /api/quotations`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "client": "client_id_here",
+  "projectTitle": "E-commerce Website Development",
+  "projectDescription": "Full-featured online store with payment integration",
+  "items": [
+    {
+      "description": "Frontend Development (React/Next.js)",
+      "quantity": 1,
+      "unitPrice": 5000
+    },
+    {
+      "description": "Backend API Development (Node.js/Express)",
+      "quantity": 1,
+      "unitPrice": 4000
+    },
+    {
+      "description": "Payment Gateway Integration",
+      "quantity": 1,
+      "unitPrice": 1500
+    }
+  ],
+  "tax": 1050,
+  "discount": 500,
+  "validUntil": "2025-12-31",
+  "notes": "Payment terms: 50% upfront, 50% on completion"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation created successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "quotationNumber": "QT-2025-0001",
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "company": "Example Corp"
+      },
+      "projectTitle": "E-commerce Website Development",
+      "items": [...],
+      "subtotal": 10500,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 11050,
+      "status": "pending",
+      "validUntil": "2025-12-31T00:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/quotations`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by quotation number or project title
+- `status` (optional): Filter by status (pending, sent, accepted, rejected, converted)
+- `client` (optional): Filter by client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotations": [...],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalQuotations": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/stats`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "stats": {
+      "total": 100,
+      "byStatus": {
+        "pending": 10,
+        "sent": 30,
+        "accepted": 40,
+        "rejected": 10,
+        "converted": 10
+      },
+      "acceptanceRate": "66.67",
+      "conversionRate": "25.00"
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/client/:clientId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `clientId` - The client ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotations": [
+      {
+        "_id": "...",
+        "quotationNumber": "QT-2025-0001",
+        "projectTitle": "E-commerce Website Development",
+        "status": "sent",
+        "totalAmount": 11050,
+        "validUntil": "2025-12-31T00:00:00.000Z",
+        "createdBy": {
+          "firstName": "Admin",
+          "lastName": "User",
+          "email": "admin@example.com"
+        }
+      }
+    ]
+  }
+}
+```
+
+#### `GET /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "quotationNumber": "QT-2025-0001",
+      "client": {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678",
+        "company": "Example Corp"
+      },
+      "projectTitle": "E-commerce Website Development",
+      "projectDescription": "Full project description",
+      "items": [
+        {
+          "description": "Frontend Development",
+          "quantity": 1,
+          "unitPrice": 5000,
+          "total": 5000
+        }
+      ],
+      "subtotal": 10500,
+      "tax": 1050,
+      "discount": 500,
+      "totalAmount": 11050,
+      "status": "sent",
+      "validUntil": "2025-12-31T00:00:00.000Z",
+      "notes": "Payment terms: 50% upfront",
+      "createdBy": {...},
+      "convertedToInvoice": null,
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `PUT /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "projectTitle": "Updated Project Title",
+  "projectDescription": "Updated description",
+  "items": [
+    {
+      "description": "Updated Item",
+      "quantity": 2,
+      "unitPrice": 3000
+    }
+  ],
+  "tax": 1200,
+  "discount": 600,
+  "validUntil": "2025-12-31",
+  "notes": "Updated notes"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation updated successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "projectTitle": "Updated Project Title",
+      "totalAmount": 6600,
+      ...
+    }
+  }
+}
+```
+
+#### `DELETE /api/quotations/:quotationId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation deleted successfully"
+}
+```
+
+#### `POST /api/quotations/:quotationId/accept`
+**Headers:** `Authorization: Bearer <client_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation accepted successfully",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "status": "accepted",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/quotations/:quotationId/reject`
+**Headers:** `Authorization: Bearer <client_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "reason": "Budget constraints"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation rejected",
+  "data": {
+    "quotation": {
+      "_id": "...",
+      "status": "rejected",
+      "notes": "Rejection reason: Budget constraints",
+      ...
+    }
+  }
+}
+```
+
+#### `POST /api/quotations/:quotationId/convert-to-invoice`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Body:**
+```json
+{
+  "dueDate": "2025-12-31"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation converted to invoice successfully",
+  "data": {
+    "invoice": {
+      "_id": "...",
+      "invoiceNumber": "INV-2025-0001",
+      "client": {...},
+      "projectTitle": "E-commerce Website Development",
+      "items": [...],
+      "totalAmount": 11050,
+      "dueDate": "2025-12-31T00:00:00.000Z",
+      "status": "draft",
+      ...
+    },
+    "quotation": {
+      "_id": "...",
+      "status": "converted",
+      "convertedToInvoice": "invoice_id_here",
+      ...
+    }
+  }
+}
+```
+
+#### `GET /api/quotations/:quotationId/pdf`
+**Headers:** `Authorization: Bearer <token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:** PDF file (binary)
+- Content-Type: `application/pdf`
+- Content-Disposition: `attachment; filename=quotation-QT-2025-0001.pdf`
+
+#### `POST /api/quotations/:quotationId/send`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**URL Parameter:** `quotationId` - The quotation ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation sent successfully"
+}
+```
+
 ---
 
 ## 📝 API Examples
