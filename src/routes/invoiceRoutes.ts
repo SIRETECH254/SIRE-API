@@ -7,7 +7,9 @@ import {
     deleteInvoice,
     markAsPaid,
     markAsOverdue,
-    cancelInvoice
+    cancelInvoice,
+    generateInvoicePDFController,
+    sendInvoice
 } from '../controllers/invoiceController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -201,6 +203,8 @@ router.delete('/:invoiceId', authenticateToken, authorizeRoles(['super_admin']),
 router.patch('/:invoiceId/mark-paid', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsPaid);
 router.patch('/:invoiceId/mark-overdue', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsOverdue);
 router.patch('/:invoiceId/cancel', authenticateToken, authorizeRoles(['super_admin', 'finance']), cancelInvoice);
+router.get('/:invoiceId/pdf', authenticateToken, generateInvoicePDFController);
+router.post('/:invoiceId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendInvoice);
 
 export default router;
 

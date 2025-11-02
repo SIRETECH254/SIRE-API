@@ -356,3 +356,106 @@ export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: 
     }
 };
 
+export const sendInvoiceEmail = async (email: string, invoice: any, pdfUrl: string, pdfBuffer?: Buffer) => {
+    if (!email || !invoice) {
+        throw errorHandler(400, "Email and invoice are required for sending invoice email");
+    }
+
+    try {
+        const transporter = createTransporter();
+        const clientName = invoice.client 
+            ? `${invoice.client.firstName || ''} ${invoice.client.lastName || ''}`.trim() || 'Client'
+            : 'Client';
+        const invoiceNumber = invoice.invoiceNumber || 'N/A';
+        const dueDate = invoice.dueDate 
+            ? new Date(invoice.dueDate).toLocaleDateString()
+            : 'N/A';
+        const totalAmount = invoice.totalAmount || 0;
+        const paidAmount = invoice.paidAmount || 0;
+        const balanceDue = totalAmount - paidAmount;
+
+        const mailOptions: any = {
+            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: `Invoice ${invoiceNumber} - SIRE Tech`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">Your Business Management Partner</p>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Invoice ${invoiceNumber}</h2>
+                        <p style="color: #666; margin-bottom: 20px;">Hi ${clientName},</p>
+                        <p style="color: #666; margin-bottom: 25px;">
+                            Please find attached your invoice for your review and payment.
+                        </p>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Invoice Number:</strong> ${invoiceNumber}</p>
+                            ${invoice.projectTitle ? `<p style="margin: 5px 0; color: #333;"><strong>Project:</strong> ${invoice.projectTitle}</p>` : ''}
+                            <p style="margin: 5px 0; color: #333;"><strong>Due Date:</strong> ${dueDate}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Total Amount:</strong> $${totalAmount.toFixed(2)}</p>
+                            ${paidAmount > 0 ? `<p style="margin: 5px 0; color: #333;"><strong>Paid Amount:</strong> $${paidAmount.toFixed(2)}</p>` : ''}
+                            ${balanceDue > 0 ? `<p style="margin: 5px 0; color: #d32f2f;"><strong>Balance Due:</strong> $${balanceDue.toFixed(2)}</p>` : ''}
+                        </div>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${pdfUrl}" style="background: #2563eb; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 10px;">
+                                View Invoice PDF
+                            </a>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            You can also download the invoice PDF from the link above or make a payment through your client portal.
+                        </p>
+                        
+                        ${invoice.notes ? `
+                            <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                                <p style="margin: 0; color: #856404;"><strong>Notes:</strong> ${invoice.notes}</p>
+                            </div>
+                        ` : ''}
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            If you have any questions about this invoice or need assistance with payment, please don't hesitate to contact us.
+                        </p>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated message, please do not reply.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        // Attach PDF buffer if provided
+        if (pdfBuffer) {
+            mailOptions.attachments = [
+                {
+                    filename: `invoice-${invoiceNumber}.pdf`,
+                    content: pdfBuffer,
+                    contentType: 'application/pdf'
+                }
+            ];
+        }
+
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
+                if (error) {
+                    console.error('Error sending invoice email:', error);
+                    reject(errorHandler(500, `Failed to send invoice email: ${error.message}`));
+                } else {
+                    console.log("Invoice email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
+
+    } catch (error: any) {
+        console.error('Error sending invoice email:', error);
+        throw errorHandler(500, `Failed to send invoice email: ${error.message}`);
+    }
+};
+

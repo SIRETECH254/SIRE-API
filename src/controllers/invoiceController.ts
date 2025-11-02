@@ -1,48 +1,85 @@
 import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Invoice from '../models/Invoice';
-import Client from '../models/Client';
+import Quotation from '../models/Quotation';
+import Project from '../models/Project';
 import Payment from '../models/Payment';
+import { generateInvoicePDF } from '../utils/generatePDF';
+import { v2 as cloudinary } from 'cloudinary';
+import { sendInvoiceEmail } from '../services/external/emailService';
 
 export const createInvoice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { client, quotation, projectTitle, items, tax, discount, dueDate, notes }: {
-            client: string;
-            quotation?: string;
-            projectTitle: string;
-            items: Array<{ description: string; quantity: number; unitPrice: number; }>;
-            tax?: number;
-            discount?: number;
-            dueDate: Date;
-            notes?: string;
+        const { quotation, dueDate }: {
+            quotation: string;
+            dueDate?: Date;
         } = req.body;
 
-        if (!client || !projectTitle || !items || items.length === 0 || !dueDate) {
-            return next(errorHandler(400, "Client, project title, items, and due date are required"));
+        // Validation - only quotation is required
+        if (!quotation) {
+            return next(errorHandler(400, "Quotation is required"));
         }
 
-        const clientExists = await Client.findById(client);
-        if (!clientExists) {
-            return next(errorHandler(404, "Client not found"));
+        // Check if quotation exists
+        const quotationExists = await Quotation.findById(quotation)
+            .populate('project', 'title');
+        
+        if (!quotationExists) {
+            return next(errorHandler(404, "Quotation not found"));
         }
 
+        // Check if quotation has already been converted
+        if (quotationExists.convertedToInvoice) {
+            return next(errorHandler(400, "This quotation has already been converted to an invoice"));
+        }
+
+        // Get project title from populated project
+        const projectTitle = (quotationExists.project as any)?.title || '';
+
+        // Create invoice from quotation data
         const invoice = new Invoice({
-            client,
-            quotation,
-            projectTitle,
-            items,
-            tax: tax || 0,
-            discount: discount || 0,
-            dueDate,
-            notes,
+            client: quotationExists.client,
+            quotation: quotationExists._id,
+            projectTitle: projectTitle,
+            items: quotationExists.items.map((item: any) => ({
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                total: item.total
+            })),
+            tax: quotationExists.tax,
+            discount: quotationExists.discount,
+            dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
+            notes: quotationExists.notes,
             createdBy: (req as any).user?._id
         });
 
         await invoice.save();
-        await invoice.populate('client', 'firstName lastName email company');
-        if (quotation) await invoice.populate('quotation');
 
-        res.status(201).json({ success: true, message: "Invoice created successfully", data: { invoice } });
+        // Update project with invoice reference
+        if (quotationExists.project) {
+            const project = await Project.findById(quotationExists.project);
+            if (project) {
+                project.invoice = invoice._id as any;
+                await project.save();
+            }
+        }
+
+        // Update quotation status to 'converted'
+        quotationExists.status = 'converted';
+        quotationExists.convertedToInvoice = invoice._id as any;
+        await quotationExists.save();
+
+        // Populate references
+        await invoice.populate('client', 'firstName lastName email company');
+        await invoice.populate('quotation', 'quotationNumber');
+        await invoice.populate('createdBy', 'firstName lastName email');
+
+        res.status(201).json({ 
+            success: true, 
+            message: "Invoice created successfully", 
+            data: { invoice } 
+        });
 
     } catch (error: any) {
         console.error('Create invoice error:', error);
@@ -259,6 +296,190 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
     } catch (error: any) {
         console.error('Cancel invoice error:', error);
         next(errorHandler(500, "Server error while cancelling invoice"));
+    }
+};
+
+export const generateInvoicePDFController = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { invoiceId } = req.params as any;
+
+        const invoice = await Invoice.findById(invoiceId)
+            .populate('client', 'firstName lastName email company phone address city country')
+            .populate('quotation', 'quotationNumber')
+            .populate('createdBy', 'firstName lastName email');
+
+        if (!invoice) {
+            return next(errorHandler(404, "Invoice not found"));
+        }
+
+        // Generate PDF
+        const pdfBuffer = await generateInvoicePDF(invoice);
+
+        // Upload PDF to Cloudinary as raw file using stream
+        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/invoices',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct the correct URL for raw files with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        
+        if (!pdfUrl) {
+            // Fallback: construct URL manually with .pdf extension
+            const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
+                ? uploadResult.public_id 
+                : `sire-tech/invoices/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            // Ensure .pdf extension is present in the URL for browser viewing
+            if (!pdfUrl.includes('.pdf')) {
+                // If URL has query params, insert .pdf before the query
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Invoice PDF generated successfully",
+            pdfUrl: pdfUrl
+        });
+
+    } catch (error: any) {
+        console.error('Generate invoice PDF error:', error);
+        next(errorHandler(500, "Server error while generating invoice PDF"));
+    }
+};
+
+export const sendInvoice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { invoiceId } = req.params as any;
+
+        const invoice = await Invoice.findById(invoiceId)
+            .populate('client', 'firstName lastName email company phone')
+            .populate('quotation', 'quotationNumber');
+
+        if (!invoice) {
+            return next(errorHandler(404, "Invoice not found"));
+        }
+
+        // Check if invoice has a client with email
+        if (!invoice.client) {
+            return next(errorHandler(400, "Invoice must have an associated client"));
+        }
+
+        const client = invoice.client as any;
+        if (!client.email) {
+            return next(errorHandler(400, "Client email is required to send invoice"));
+        }
+
+        // Generate PDF
+        const pdfBuffer = await generateInvoicePDF(invoice);
+
+        // Upload PDF to Cloudinary
+        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/invoices',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
+                ? uploadResult.public_id 
+                : `sire-tech/invoices/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        // Send email to client
+        await sendInvoiceEmail(client.email, invoice, pdfUrl, pdfBuffer);
+
+        // Update invoice status to 'sent'
+        if (invoice.status === 'draft') {
+            invoice.status = 'sent';
+            await invoice.save();
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Invoice sent successfully",
+            data: {
+                invoiceId: invoice._id,
+                sentTo: client.email,
+                pdfUrl: pdfUrl
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Send invoice error:', error);
+        next(errorHandler(500, "Server error while sending invoice"));
     }
 };
 
