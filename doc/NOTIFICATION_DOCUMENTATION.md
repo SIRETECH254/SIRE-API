@@ -5,6 +5,8 @@
 - [Notification Overview](#notification-overview)
 - [Notification Model](#notification-model)
 - [Notification Controller](#notification-controller)
+- [Notification Instances](#notification-instances)
+- [Bidirectional Notifications](#bidirectional-notifications)
 - [Notification Routes](#notification-routes)
 - [Notification Services](#notification-services)
 - [Middleware](#middleware)
@@ -63,8 +65,34 @@ interface INotification {
   sentAt?: Date;
   readAt?: Date;
   metadata?: Record<string, any>;
+  
+  // Bidirectional Notification Support
+  actions?: NotificationAction[];      // Available actions
+  context?: NotificationContext;       // Action context data
+  expiresAt?: Date;                   // Action expiry (optional)
+  
   createdAt: Date;
   updatedAt: Date;
+}
+
+interface NotificationAction {
+  id: string;                         // Unique action ID (e.g., 'create_invoice')
+  label: string;                      // Button text (e.g., 'Create Invoice')
+  type: 'api' | 'navigate' | 'modal' | 'confirm';
+  endpoint?: string;                  // API endpoint (for 'api' type)
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  payload?: Record<string, any>;      // Request payload
+  route?: string;                     // Navigation route (for 'navigate' type)
+  modal?: string;                     // Modal component (for 'modal' type)
+  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  requiresConfirmation?: boolean;      // Show confirmation dialog
+  confirmationMessage?: string;
+}
+
+interface NotificationContext {
+  resourceId: string;                 // Resource ID (e.g., quotationId)
+  resourceType: string;               // Resource type (e.g., 'quotation')
+  additionalData?: Record<string, any>;
 }
 ```
 
@@ -888,7 +916,1534 @@ export const getNotificationsByCategory = async (req: Request, res: Response, ne
 
 ---
 
+## 📍 Notification Instances
+
+This section identifies all instances across the application where **in-app notifications** should be sent. These notifications help users stay informed about important events and changes in the system.
+
+### 📧 QUOTATION CONTROLLER (`quotationController.ts`)
+
+#### 1. `createQuotation` ✅ **PRIORITY: HIGH**
+**Event:** New quotation created  
+**Recipients:** 
+- **Client** (quotation recipient)
+- **Finance Team** (optional - for awareness)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `createQuotation` function (after quotation is saved)
+
+**Implementation:**
+```typescript
+// After quotation.save() in createQuotation function
+await createInAppNotification({
+  recipient: quotation.client.toString(),
+  recipientModel: 'Client',
+  category: 'quotation',
+  subject: 'New Quotation Created',
+  message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    projectId: quotation.project
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 2. `sendQuotation` ✅ **PRIORITY: HIGH**
+**Event:** Quotation sent to client via email  
+**Recipients:**
+- **Client** (to notify in-app that quotation was sent)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `sendQuotation` function (after email is sent)
+
+**Implementation:**
+```typescript
+// After quotation.status is updated to 'sent' in sendQuotation function
+await createInAppNotification({
+  recipient: quotation.client._id.toString(),
+  recipientModel: 'Client',
+  category: 'quotation',
+  subject: 'Quotation Sent',
+  message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    pdfUrl: pdfUrl
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 3. `acceptQuotation` ✅ **PRIORITY: HIGH**
+**Event:** Client accepts quotation  
+**Recipients:**
+- **Admin/Finance** (who created the quotation)
+- **Project Manager** (if project exists)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `acceptQuotation` function (after quotation status is updated)
+
+**Implementation:**
+```typescript
+// After quotation.status is updated to 'accepted' in acceptQuotation function
+// For Admin/Finance who created the quotation
+await createInAppNotification({
+  recipient: quotation.createdBy.toString(),
+  recipientModel: 'User',
+  category: 'quotation',
+  subject: 'Quotation Accepted',
+  message: `Client has accepted quotation ${quotation.quotationNumber}. You can now convert it to an invoice.`,
+  actions: [
+    {
+      id: 'create_invoice',
+      label: 'Create Invoice',
+      type: 'api',
+      endpoint: `/api/quotation/${quotation._id}/convert-to-invoice`,
+      method: 'POST',
+      variant: 'primary'
+    },
+    {
+      id: 'view_quotation',
+      label: 'View Quotation',
+      type: 'navigate',
+      route: `/quotations/${quotation._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: quotation._id.toString(),
+    resourceType: 'quotation'
+  },
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    projectId: quotation.project
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 4. `rejectQuotation` ✅ **PRIORITY: MEDIUM**
+**Event:** Client rejects quotation  
+**Recipients:**
+- **Admin/Finance** (who created the quotation)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `rejectQuotation` function (after quotation status is updated)
+
+**Implementation:**
+```typescript
+// After quotation.status is updated to 'rejected' in rejectQuotation function
+await createInAppNotification({
+  recipient: quotation.createdBy.toString(),
+  recipientModel: 'User',
+  category: 'quotation',
+  subject: 'Quotation Rejected',
+  message: `Client has rejected quotation ${quotation.quotationNumber}. Reason: ${reason || 'No reason provided'}`,
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    reason: reason
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 5. `updateQuotation` ⚠️ **PRIORITY: LOW**
+**Event:** Quotation details updated (if status is 'sent')  
+**Recipients:**
+- **Client** (if quotation was already sent)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `updateQuotation` function (after quotation is updated, only if status is 'sent')
+
+**Implementation:**
+```typescript
+// After quotation is updated in updateQuotation function (only if status is 'sent')
+if (quotation.status === 'sent') {
+  await createInAppNotification({
+    recipient: quotation.client.toString(),
+    recipientModel: 'Client',
+    category: 'quotation',
+    subject: 'Quotation Updated',
+    message: `Quotation ${quotation.quotationNumber} has been updated. Please review the changes.`,
+    metadata: {
+      quotationId: quotation._id,
+      quotationNumber: quotation.quotationNumber
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+#### 6. `convertToInvoice` ✅ **PRIORITY: HIGH**
+**Event:** Quotation converted to invoice  
+**Recipients:**
+- **Client** (to notify new invoice was created)
+- **Admin/Finance** (confirmation)
+
+**Controller Location:** `src/controllers/quotationController.ts` - `convertToInvoice` function (after invoice is created)
+
+**Implementation:**
+```typescript
+// After invoice is created and quotation.convertedToInvoice is set in convertToInvoice function
+// For Client
+await createInAppNotification({
+  recipient: invoice.client.toString(),
+  recipientModel: 'Client',
+  category: 'invoice',
+  subject: 'Invoice Created from Quotation',
+  message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
+  metadata: {
+    quotationId: quotation._id,
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber
+  },
+  io: req.app.get('io')
+});
+
+// For Admin/Finance confirmation
+await createInAppNotification({
+  recipient: invoice.createdBy.toString(),
+  recipientModel: 'User',
+  category: 'invoice',
+  subject: 'Invoice Created',
+  message: `Invoice ${invoice.invoiceNumber} has been created from quotation ${quotation.quotationNumber}.`,
+  metadata: {
+    quotationId: quotation._id,
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+### 💰 INVOICE CONTROLLER (`invoiceController.ts`)
+
+#### 7. `createInvoice` ✅ **PRIORITY: HIGH**
+**Event:** New invoice created (from quotation or standalone)  
+**Recipients:**
+- **Client** (invoice recipient)
+
+**Controller Location:** `src/controllers/invoiceController.ts` - `createInvoice` function (after invoice is saved)
+
+**Implementation:**
+```typescript
+// After invoice.save() in createInvoice function
+await createInAppNotification({
+  recipient: invoice.client.toString(),
+  recipientModel: 'Client',
+  category: 'invoice',
+  subject: 'New Invoice Created',
+  message: `A new invoice ${invoice.invoiceNumber} has been created. Amount: $${invoice.totalAmount.toFixed(2)}`,
+  metadata: {
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    totalAmount: invoice.totalAmount,
+    dueDate: invoice.dueDate
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 8. `sendInvoice` ✅ **PRIORITY: HIGH**
+**Event:** Invoice sent to client via email  
+**Recipients:**
+- **Client** (to notify in-app that invoice was sent)
+
+**Controller Location:** `src/controllers/invoiceController.ts` - `sendInvoice` function (after email is sent)
+
+**Implementation:**
+```typescript
+// After invoice.status is updated to 'sent' in sendInvoice function
+await createInAppNotification({
+  recipient: invoice.client._id.toString(),
+  recipientModel: 'Client',
+  category: 'invoice',
+  subject: 'Invoice Sent',
+  message: `Invoice ${invoice.invoiceNumber} has been sent to your email. Please make payment by ${new Date(invoice.dueDate).toLocaleDateString()}.`,
+  actions: [
+    {
+      id: 'make_payment',
+      label: 'Pay Now',
+      type: 'api',
+      endpoint: '/api/payments/initiate',
+      method: 'POST',
+      payload: {
+        invoiceId: invoice._id.toString(),
+        amount: invoice.totalAmount
+      },
+      variant: 'primary'
+    },
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${invoice._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: invoice._id.toString(),
+    resourceType: 'invoice'
+  },
+  metadata: {
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    dueDate: invoice.dueDate,
+    pdfUrl: pdfUrl
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 9. `markAsPaid` ✅ **PRIORITY: HIGH**
+**Event:** Invoice marked as paid (manually by admin)  
+**Recipients:**
+- **Client** (payment confirmation)
+- **Finance Team** (optional)
+
+**Controller Location:** `src/controllers/invoiceController.ts` - `markAsPaid` function (after invoice status is updated)
+
+**Implementation:**
+```typescript
+// After invoice.status is updated to 'paid' in markAsPaid function
+await createInAppNotification({
+  recipient: invoice.client.toString(),
+  recipientModel: 'Client',
+  category: 'payment',
+  subject: 'Invoice Paid',
+  message: `Invoice ${invoice.invoiceNumber} has been marked as paid. Thank you for your payment!`,
+  metadata: {
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    paidAmount: invoice.paidAmount,
+    paymentDate: invoice.paidDate
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 10. `markAsOverdue` ✅ **PRIORITY: HIGH**
+**Event:** Invoice marked as overdue  
+**Recipients:**
+- **Client** (payment reminder)
+- **Finance Team** (alert)
+
+**Controller Location:** `src/controllers/invoiceController.ts` - `markAsOverdue` function (after invoice status is updated)
+
+**Implementation:**
+```typescript
+// After invoice.status is updated to 'overdue' in markAsOverdue function
+await createInAppNotification({
+  recipient: invoice.client.toString(),
+  recipientModel: 'Client',
+  category: 'invoice',
+  subject: 'Invoice Overdue',
+  message: `Invoice ${invoice.invoiceNumber} is now overdue. Please make payment as soon as possible.`,
+  actions: [
+    {
+      id: 'make_payment',
+      label: 'Pay Now',
+      type: 'api',
+      endpoint: '/api/payments/initiate',
+      method: 'POST',
+      payload: {
+        invoiceId: invoice._id.toString(),
+        method: 'mpesa',
+        amount: invoice.totalAmount - invoice.paidAmount
+      },
+      variant: 'primary',
+      requiresConfirmation: true,
+      confirmationMessage: `Pay $${invoice.totalAmount - invoice.paidAmount} for invoice ${invoice.invoiceNumber}?`
+    },
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${invoice._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: invoice._id.toString(),
+    resourceType: 'invoice'
+  },
+  metadata: {
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    dueDate: invoice.dueDate,
+    totalAmount: invoice.totalAmount
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 11. `cancelInvoice` ⚠️ **PRIORITY: MEDIUM**
+**Event:** Invoice cancelled  
+**Recipients:**
+- **Client** (if invoice was sent)
+- **Finance Team**
+
+**Controller Location:** `src/controllers/invoiceController.ts` - `cancelInvoice` function (after invoice status is updated)
+
+**Implementation:**
+```typescript
+// After invoice.status is updated to 'cancelled' in cancelInvoice function
+if (invoice.status === 'sent' || invoice.status === 'paid') {
+  await createInAppNotification({
+    recipient: invoice.client.toString(),
+    recipientModel: 'Client',
+    category: 'invoice',
+    subject: 'Invoice Cancelled',
+    message: `Invoice ${invoice.invoiceNumber} has been cancelled. Reason: ${reason}`,
+    metadata: {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      reason: reason
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+### 💳 PAYMENT CONTROLLER (`paymentController.ts`)
+
+#### 12. `createPaymentAdmin` / `initiatePayment` ✅ **PRIORITY: HIGH**
+**Event:** Payment initiated  
+**Recipients:**
+- **Client** (payment initiated confirmation)
+
+**Controller Location:** `src/controllers/paymentController.ts` - `createPaymentAdmin` and `initiatePayment` functions (after payment record is created)
+
+**Implementation:**
+```typescript
+// After payment record is created in createPaymentAdmin or initiatePayment function
+await createInAppNotification({
+  recipient: payment.client.toString(),
+  recipientModel: 'Client',
+  category: 'payment',
+  subject: 'Payment Initiated',
+  message: `Payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} has been initiated via ${payment.paymentMethod}. Please complete the payment.`,
+  metadata: {
+    paymentId: payment._id,
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: payment.amount,
+    method: payment.paymentMethod,
+    status: 'pending'
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 13. Payment Webhook - Success ✅ **PRIORITY: HIGH**
+**Event:** Payment completed successfully (M-Pesa/Paystack callback)  
+**Recipients:**
+- **Client** (payment success confirmation)
+- **Finance Team** (optional)
+
+**Controller Location:** `src/controllers/paymentController.ts` - `mpesaWebhook` and `paystackWebhook` functions (when payment status is 'completed')
+
+**Implementation:**
+```typescript
+// After payment.status is set to 'completed' in mpesaWebhook/paystackWebhook function
+await createInAppNotification({
+  recipient: payment.client.toString(),
+  recipientModel: 'Client',
+  category: 'payment',
+  subject: 'Payment Successful',
+  message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} has been received successfully. Transaction ID: ${payment.transactionId}`,
+  actions: [
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${payment.invoice}`,
+      variant: 'primary'
+    },
+    {
+      id: 'download_receipt',
+      label: 'Download Receipt',
+      type: 'api',
+      endpoint: `/api/payments/${payment._id}/receipt`,
+      method: 'GET',
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: payment.invoice.toString(),
+    resourceType: 'invoice'
+  },
+  metadata: {
+    paymentId: payment._id,
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: payment.amount,
+    transactionId: payment.transactionId,
+    paymentDate: payment.paymentDate
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+#### 14. Payment Webhook - Failed ⚠️ **PRIORITY: MEDIUM**
+**Event:** Payment failed  
+**Recipients:**
+- **Client** (payment failure notification)
+
+**Controller Location:** `src/controllers/paymentController.ts` - `mpesaWebhook` and `paystackWebhook` functions (when payment status is 'failed')
+
+**Implementation:**
+```typescript
+// After payment.status is set to 'failed' in mpesaWebhook/paystackWebhook function
+await createInAppNotification({
+  recipient: payment.client.toString(),
+  recipientModel: 'Client',
+  category: 'payment',
+  subject: 'Payment Failed',
+  message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+  actions: [
+    {
+      id: 'retry_payment',
+      label: 'Try Again',
+      type: 'api',
+      endpoint: '/api/payments/initiate',
+      method: 'POST',
+      payload: {
+        invoiceId: invoice._id.toString(),
+        amount: payment.amount
+      },
+      variant: 'primary'
+    },
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${invoice._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: invoice._id.toString(),
+    resourceType: 'invoice'
+  },
+  metadata: {
+    paymentId: payment._id,
+    invoiceId: invoice._id,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: payment.amount,
+    error: errorMessage
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+### 🚀 PROJECT CONTROLLER (`projectController.ts`)
+
+#### 15. `createProject` ✅ **PRIORITY: HIGH**
+**Event:** New project created  
+**Recipients:**
+- **Client** (project owner)
+- **Assigned Team Members** (if assignedTo is provided)
+
+**Controller Location:** `src/controllers/projectController.ts` - `createProject` function (after project is saved)
+
+**Implementation:**
+```typescript
+// After project.save() in createProject function
+// For Client
+await createInAppNotification({
+  recipient: project.client.toString(),
+  recipientModel: 'Client',
+  category: 'project',
+  subject: 'New Project Created',
+  message: `A new project "${project.title}" has been created.`,
+  metadata: {
+    projectId: project._id,
+    projectNumber: project.projectNumber,
+    title: project.title,
+    priority: project.priority
+  },
+  io: req.app.get('io')
+});
+
+// For Assigned Team Members (if any)
+if (project.assignedTo && project.assignedTo.length > 0) {
+  for (const userId of project.assignedTo) {
+    await createInAppNotification({
+      recipient: userId.toString(),
+      recipientModel: 'User',
+      category: 'project',
+      subject: 'New Project Created',
+      message: `A new project "${project.title}" has been created and assigned to you.`,
+      metadata: {
+        projectId: project._id,
+        projectNumber: project.projectNumber,
+        title: project.title,
+        priority: project.priority
+      },
+      io: req.app.get('io')
+    });
+  }
+}
+```
+
+---
+
+#### 16. `assignTeamMembers` ✅ **PRIORITY: HIGH**
+**Event:** Team members assigned to project  
+**Recipients:**
+- **Newly Assigned Team Members** (only those newly added)
+- **Client** (optional - to inform who's working on their project)
+
+**Controller Location:** `src/controllers/projectController.ts` - `assignTeamMembers` function (after team members are assigned)
+
+**Implementation:**
+```typescript
+// After project.assignedTo is updated in assignTeamMembers function
+// For newly assigned team members
+for (const userId of newUserIds) {
+  await createInAppNotification({
+    recipient: userId,
+    recipientModel: 'User',
+    category: 'project',
+    subject: 'Assigned to Project',
+    message: `You have been assigned to project "${project.title}". Priority: ${project.priority}`,
+    actions: [
+      {
+        id: 'view_project',
+        label: 'View Project',
+        type: 'navigate',
+        route: `/projects/${project._id}`,
+        variant: 'primary'
+      }
+    ],
+    context: {
+      resourceId: project._id.toString(),
+      resourceType: 'project'
+    },
+    metadata: {
+      projectId: project._id,
+      projectNumber: project.projectNumber,
+      title: project.title,
+      priority: project.priority
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+#### 17. `updateProjectStatus` ✅ **PRIORITY: HIGH**
+**Event:** Project status changed  
+**Recipients:**
+- **Client** (status updates)
+- **Assigned Team Members** (status changes)
+- **Project Manager** (if status is 'completed' or 'cancelled')
+
+**Controller Location:** `src/controllers/projectController.ts` - `updateProjectStatus` function (after project status is updated)
+
+**Implementation:**
+```typescript
+// After project.status is updated in updateProjectStatus function
+// For Client
+await createInAppNotification({
+  recipient: project.client.toString(),
+  recipientModel: 'Client',
+  category: 'project',
+  subject: 'Project Status Updated',
+  message: `Project "${project.title}" status has been updated to: ${project.status}`,
+  actions: [
+    {
+      id: 'view_project',
+      label: 'View Project',
+      type: 'navigate',
+      route: `/projects/${project._id}`,
+      variant: 'primary'
+    }
+  ],
+  metadata: {
+    projectId: project._id,
+    projectNumber: project.projectNumber,
+    title: project.title,
+    oldStatus: oldStatus,
+    newStatus: project.status
+  },
+  io: req.app.get('io')
+});
+
+// For Assigned Team Members
+if (project.assignedTo && project.assignedTo.length > 0) {
+  for (const userId of project.assignedTo) {
+    await createInAppNotification({
+      recipient: userId.toString(),
+      recipientModel: 'User',
+      category: 'project',
+      subject: 'Project Status Updated',
+      message: `Project "${project.title}" status has been updated to: ${project.status}`,
+      metadata: {
+        projectId: project._id,
+        projectNumber: project.projectNumber,
+        title: project.title,
+        oldStatus: oldStatus,
+        newStatus: project.status
+      },
+      io: req.app.get('io')
+    });
+  }
+}
+```
+
+---
+
+#### 18. `updateProgress` ✅ **PRIORITY: MEDIUM**
+**Event:** Project progress updated (especially milestones like 25%, 50%, 75%, 100%)  
+**Recipients:**
+- **Client** (for significant progress updates: 25%, 50%, 75%, 100%)
+- **Project Manager** (for all updates)
+
+**Controller Location:** `src/controllers/projectController.ts` - `updateProgress` function (after progress is updated, especially for milestone percentages)
+
+**Implementation:**
+```typescript
+// After project.progress is updated in updateProgress function
+// Check if it's a milestone percentage (25, 50, 75, 100)
+const isMilestoneProgress = [25, 50, 75, 100].includes(progress);
+
+// For Client (only for milestones)
+if (isMilestoneProgress) {
+  await createInAppNotification({
+    recipient: project.client.toString(),
+    recipientModel: 'Client',
+    category: 'project',
+    subject: 'Project Progress Updated',
+    message: `Project "${project.title}" progress has been updated to ${progress}%`,
+    metadata: {
+      projectId: project._id,
+      projectNumber: project.projectNumber,
+      title: project.title,
+      progress: progress,
+      status: project.status
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+#### 19. `addMilestone` ✅ **PRIORITY: MEDIUM**
+**Event:** New milestone added to project  
+**Recipients:**
+- **Client** (milestone information)
+- **Assigned Team Members** (to know new deliverables)
+
+**Controller Location:** `src/controllers/projectController.ts` - `addMilestone` function (after milestone is added)
+
+**Implementation:**
+```typescript
+// After milestone is added in addMilestone function
+const newMilestone = project.milestones[project.milestones.length - 1];
+
+// For Client
+await createInAppNotification({
+  recipient: project.client.toString(),
+  recipientModel: 'Client',
+  category: 'project',
+  subject: 'New Milestone Added',
+  message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+  metadata: {
+    projectId: project._id,
+    projectNumber: project.projectNumber,
+    milestoneTitle: newMilestone.title,
+    dueDate: newMilestone.dueDate
+  },
+  io: req.app.get('io')
+});
+
+// For Assigned Team Members
+if (project.assignedTo && project.assignedTo.length > 0) {
+  for (const userId of project.assignedTo) {
+    await createInAppNotification({
+      recipient: userId.toString(),
+      recipientModel: 'User',
+      category: 'project',
+      subject: 'New Milestone Added',
+      message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+      metadata: {
+        projectId: project._id,
+        projectNumber: project.projectNumber,
+        milestoneTitle: newMilestone.title,
+        dueDate: newMilestone.dueDate
+      },
+      io: req.app.get('io')
+    });
+  }
+}
+```
+
+---
+
+#### 20. `updateMilestone` - Status Change ✅ **PRIORITY: HIGH**
+**Event:** Milestone status changed (especially to 'completed')  
+**Recipients:**
+- **Client** (milestone completion notification)
+- **Assigned Team Members** (milestone updates)
+
+**Controller Location:** `src/controllers/projectController.ts` - `updateMilestone` function (after milestone status is updated)
+
+**Implementation:**
+```typescript
+// After milestone status is updated in updateMilestone function
+// For Client
+await createInAppNotification({
+  recipient: project.client.toString(),
+  recipientModel: 'Client',
+  category: 'project',
+  subject: 'Milestone Updated',
+  message: `Milestone "${milestone.title}" in project "${project.title}" has been marked as ${milestone.status}`,
+  metadata: {
+    projectId: project._id,
+    projectNumber: project.projectNumber,
+    milestoneId: milestone._id,
+    milestoneTitle: milestone.title,
+    status: milestone.status
+  },
+  io: req.app.get('io')
+});
+
+// For Assigned Team Members
+if (project.assignedTo && project.assignedTo.length > 0) {
+  for (const userId of project.assignedTo) {
+    await createInAppNotification({
+      recipient: userId.toString(),
+      recipientModel: 'User',
+      category: 'project',
+      subject: 'Milestone Updated',
+      message: `Milestone "${milestone.title}" in project "${project.title}" has been marked as ${milestone.status}`,
+      metadata: {
+        projectId: project._id,
+        projectNumber: project.projectNumber,
+        milestoneId: milestone._id,
+        milestoneTitle: milestone.title,
+        status: milestone.status
+      },
+      io: req.app.get('io')
+    });
+  }
+}
+```
+
+---
+
+#### 21. `uploadAttachment` ⚠️ **PRIORITY: LOW**
+**Event:** New attachment uploaded to project  
+**Recipients:**
+- **Client** (new file notification)
+- **Assigned Team Members** (if uploaded by someone else)
+
+**Controller Location:** `src/controllers/projectController.ts` - `uploadAttachment` function (after attachment is uploaded)
+
+**Implementation:**
+```typescript
+// After attachment is uploaded in uploadAttachment function
+const newAttachment = project.attachments[project.attachments.length - 1];
+
+// For Client
+await createInAppNotification({
+  recipient: project.client.toString(),
+  recipientModel: 'Client',
+  category: 'project',
+  subject: 'New Project Attachment',
+  message: `A new file "${newAttachment.name}" has been uploaded to project "${project.title}"`,
+  metadata: {
+    projectId: project._id,
+    projectNumber: project.projectNumber,
+    attachmentId: newAttachment._id,
+    fileName: newAttachment.name,
+    uploadedBy: req.user._id
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+### 👤 CLIENT CONTROLLER (`clientController.ts`)
+
+#### 22. `updateClientStatus` ⚠️ **PRIORITY: MEDIUM**
+**Event:** Client account status changed (active/inactive)  
+**Recipients:**
+- **Client** (if account is deactivated)
+
+**Controller Location:** `src/controllers/clientController.ts` - `updateClientStatus` function (after client status is updated)
+
+**Implementation:**
+```typescript
+// After client.isActive is updated in updateClientStatus function
+if (!client.isActive) {
+  await createInAppNotification({
+    recipient: client._id.toString(),
+    recipientModel: 'Client',
+    category: 'general',
+    subject: 'Account Status Changed',
+    message: `Your account has been deactivated. Please contact support for assistance.`,
+    metadata: {
+      clientId: client._id,
+      isActive: false
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+### 👥 USER CONTROLLER (`userController.ts`)
+
+#### 23. `updateUserStatus` ⚠️ **PRIORITY: MEDIUM**
+**Event:** Admin user account status changed  
+**Recipients:**
+- **User** (if account is deactivated)
+
+**Controller Location:** `src/controllers/userController.ts` - `updateUserStatus` function (after user status is updated)
+
+**Implementation:**
+```typescript
+// After user.isActive is updated in updateUserStatus function
+if (!user.isActive) {
+  await createInAppNotification({
+    recipient: user._id.toString(),
+    recipientModel: 'User',
+    category: 'general',
+    subject: 'Account Status Changed',
+    message: `Your admin account has been deactivated. Please contact super admin for assistance.`,
+    metadata: {
+      userId: user._id,
+      isActive: false
+    },
+    io: req.app.get('io')
+  });
+}
+```
+
+---
+
+### 📊 Priority Summary
+
+#### ✅ HIGH PRIORITY (Must Implement)
+1. Quotation created (Client)
+2. Quotation sent (Client)
+3. Quotation accepted (Admin/Finance)
+4. Quotation converted to invoice (Client)
+5. Invoice created (Client)
+6. Invoice sent (Client)
+7. Invoice marked as paid (Client)
+8. Invoice marked as overdue (Client, Finance)
+9. Payment initiated (Client)
+10. Payment successful (Client)
+11. Project created (Client, Team)
+12. Team members assigned (Team, Client)
+13. Project status updated (Client, Team)
+14. Milestone completed (Client, Team)
+
+#### ⚠️ MEDIUM PRIORITY (Should Implement)
+1. Quotation rejected (Admin/Finance)
+2. Invoice cancelled (Client, Finance)
+3. Payment failed (Client)
+4. Project progress updated (Client, PM)
+5. Milestone updated (Client, Team)
+6. Client status changed (Client)
+7. User status changed (User)
+
+#### 📝 LOW PRIORITY (Nice to Have)
+1. Quotation updated (Client)
+2. Project attachment uploaded (Client, Team)
+3. User role changed (User)
+
+---
+
+### 🔧 Helper Function for Implementation
+
+**File: `src/utils/notificationHelper.ts`**
+
+```typescript
+import Notification from '../models/Notification';
+import User from '../models/User';
+import Client from '../models/Client';
+import { Server as SocketIOServer } from 'socket.io';
+
+interface NotificationAction {
+  id: string;
+  label: string;
+  type: 'api' | 'navigate' | 'modal' | 'confirm';
+  endpoint?: string;
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  payload?: Record<string, any>;
+  route?: string;
+  modal?: string;
+  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+interface NotificationContext {
+  resourceId: string;
+  resourceType: string;
+  additionalData?: Record<string, any>;
+}
+
+interface CreateInAppNotificationParams {
+  recipient: string;
+  recipientModel: 'User' | 'Client';
+  category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
+  subject: string;
+  message: string;
+  actions?: NotificationAction[];
+  context?: NotificationContext;
+  expiresAt?: Date;
+  metadata?: any;
+  io?: SocketIOServer;
+}
+
+export const createInAppNotification = async (params: CreateInAppNotificationParams): Promise<Notification | null> => {
+  try {
+    const { 
+      recipient, 
+      recipientModel, 
+      category, 
+      subject, 
+      message, 
+      actions,
+      context,
+      expiresAt,
+      metadata, 
+      io 
+    } = params;
+
+    // ✅ CHECK USER/CLIENT NOTIFICATION PREFERENCES
+    const RecipientModel = recipientModel === 'User' ? User : Client;
+    const recipientUser = await RecipientModel.findById(recipient).select('notificationPreferences');
+    
+    // Check if in-app notifications are enabled for this user
+    if (recipientUser && recipientUser.notificationPreferences) {
+      const inAppEnabled = recipientUser.notificationPreferences.inApp;
+      
+      // If in-app notifications are disabled, skip sending
+      if (inAppEnabled === false) {
+        console.log(`In-app notification skipped for ${recipientModel} ${recipient}: preference disabled`);
+        return null;
+      }
+    }
+
+    // Create notification record
+    const notification = new Notification({
+      recipient,
+      recipientModel,
+      type: 'in_app',
+      category,
+      subject,
+      message,
+      actions, // Actions array for bidirectional notifications
+      context, // Context data for actions
+      expiresAt, // Optional expiry for time-sensitive actions
+      metadata,
+      status: 'pending'
+    });
+
+    await notification.save();
+
+    // Mark as sent
+    notification.status = 'sent';
+    notification.sentAt = new Date();
+    await notification.save();
+
+    // Emit Socket.io event with full notification data including actions
+    if (io) {
+      const roomId = recipientModel === 'User' ? `user_${recipient}` : `client_${recipient}`;
+      io.to(roomId).emit('notification', {
+        notificationId: notification._id,
+        category,
+        subject,
+        message,
+        actions, // Include actions in Socket.io event
+        context,
+        expiresAt,
+        metadata,
+        createdAt: notification.createdAt
+      });
+    }
+
+    console.log(`In-app notification with actions sent to ${recipientModel} ${recipient}: ${subject}`);
+    return notification;
+  } catch (error) {
+    console.error('Error creating in-app notification:', error);
+    throw error; // Re-throw for caller to handle
+  }
+};
+```
+
+---
+
+### 📝 Usage Example
+
+```typescript
+// In quotationController.ts - createQuotation
+import { createInAppNotification } from '../utils/notificationHelper';
+
+// After saving quotation
+await createInAppNotification({
+  recipient: quotation.client.toString(),
+  recipientModel: 'Client',
+  category: 'quotation',
+  subject: 'New Quotation Created',
+  message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    projectId: quotation.project
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+### ⚙️ **Notification Preferences Handling**
+
+**IMPORTANT:** The `createInAppNotification` helper function automatically checks user and client notification preferences before sending notifications:
+
+- **If `inApp` preference is `false`:** Notification is skipped and `null` is returned
+- **If `inApp` preference is `true` or `undefined`:** Notification is sent normally
+- **Default behavior:** All preferences default to `true`, so notifications are sent unless explicitly disabled
+
+**Preferences Structure:**
+```typescript
+notificationPreferences: {
+  email: boolean;      // Default: true
+  sms: boolean;        // Default: true
+  inApp: boolean;      // Default: true
+}
+```
+
+**Users can manage their preferences via:**
+- `GET /api/users/notifications` - Get current preferences
+- `PUT /api/users/notifications` - Update preferences
+- `GET /api/clients/notifications` - Get client preferences (if implemented)
+- `PUT /api/clients/notifications` - Update client preferences (if implemented)
+
+---
+
+## 🔄 Bidirectional Notifications
+
+### Overview
+
+**Bidirectional Notifications** are interactive notifications that allow recipients to take **actions directly from the notification** without navigating away. Instead of just reading "Client accepted quotation", an admin can click **"Create Invoice"** right from the notification.
+
+### Key Concept
+
+**Traditional Notification:**
+```
+📬 "Client has accepted quotation QT-2025-0001"
+   [Read more] → Navigates to quotation page
+```
+
+**Bidirectional Notification:**
+```
+📬 "Client has accepted quotation QT-2025-0001"
+   [Create Invoice] → Directly creates invoice
+   [View Quotation] → Opens quotation details
+```
+
+---
+
+### Types of Actions in Notifications
+
+#### 1. **Direct API Actions** (Primary)
+Execute an action immediately from the notification
+
+**Examples:**
+- **Create Invoice** from quotation acceptance notification
+- **Mark as Paid** from payment notification
+- **Approve/Reject** from pending quotation notification
+- **Assign Project** from new project notification
+
+#### 2. **Navigation Actions**
+Navigate to relevant pages with pre-filled data
+
+**Examples:**
+- **View Invoice** → Opens invoice page
+- **View Project** → Opens project dashboard
+- **View Payment** → Opens payment details
+
+#### 3. **Quick Actions**
+Show modal/drawer with form or confirmation
+
+**Examples:**
+- **Reply to Message** → Opens reply modal
+- **Update Status** → Shows status selector
+- **Add Note** → Shows note input modal
+
+---
+
+### Architecture Overview
+
+```
+┌─────────────┐         ┌──────────────┐         ┌─────────────┐
+│   Backend   │────────▶│ Notification │────────▶│  Frontend   │
+│  (Action)   │         │   (Model)    │         │  (Display)  │
+└─────────────┘         └──────────────┘         └─────────────┘
+     │                        │                        │
+     │ 1. Create Notification │                        │
+     │    with actions        │                        │
+     │                        │  2. Emit Socket.io     │
+     │                        │     with actions       │
+     │                        │                        │ 3. Display
+     │                        │                        │    with buttons
+     │                        │  4. User clicks action │
+     │                        │                        │
+     │                        │  5. Frontend calls API │
+     │                        │                        │
+     │  6. Backend processes  │                        │
+     │     action & updates   │                        │
+     │                        │  7. New notification   │
+     │                        │     (result)           │
+```
+
+---
+
+### Real-World Examples
+
+#### Example 1: Quotation Acceptance → Create Invoice
+
+**Backend: Notification Creation**
+
+```typescript
+// In quotationController.ts - acceptQuotation function
+import { createInAppNotification } from '../utils/notificationHelper';
+
+// After quotation is accepted
+await createInAppNotification({
+  recipient: quotation.createdBy.toString(), // Admin who created quotation
+  recipientModel: 'User',
+  category: 'quotation',
+  subject: 'Quotation Accepted',
+  message: `Client has accepted quotation ${quotation.quotationNumber}. You can now create an invoice.`,
+  actions: [
+    {
+      id: 'create_invoice',
+      label: 'Create Invoice',
+      type: 'api',
+      endpoint: '/api/invoices',
+      method: 'POST',
+      payload: {
+        quotation: quotation._id.toString(),
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      },
+      variant: 'primary',
+      requiresConfirmation: false
+    },
+    {
+      id: 'view_quotation',
+      label: 'View Quotation',
+      type: 'navigate',
+      route: `/quotations/${quotation._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: quotation._id.toString(),
+    resourceType: 'quotation',
+    additionalData: {
+      quotationNumber: quotation.quotationNumber,
+      totalAmount: quotation.totalAmount
+    }
+  },
+  metadata: {
+    quotationId: quotation._id,
+    quotationNumber: quotation.quotationNumber,
+    projectId: quotation.project
+  },
+  io: req.app.get('io')
+});
+```
+
+#### Example 2: Payment Successful → View Invoice
+
+**Backend: Notification Creation**
+
+```typescript
+// In paymentController.ts - mpesaWebhook (success)
+await createInAppNotification({
+  recipient: payment.client.toString(),
+  recipientModel: 'Client',
+  category: 'payment',
+  subject: 'Payment Successful',
+  message: `Your payment of ${amount} for invoice ${invoiceNumber} has been received.`,
+  actions: [
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${payment.invoice}`,
+      variant: 'primary'
+    },
+    {
+      id: 'download_receipt',
+      label: 'Download Receipt',
+      type: 'api',
+      endpoint: `/api/payments/${payment._id}/receipt`,
+      method: 'GET',
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: payment.invoice.toString(),
+    resourceType: 'invoice'
+  },
+  io: req.app.get('io')
+});
+```
+
+#### Example 3: Invoice Overdue → Make Payment
+
+**Backend: Notification Creation**
+
+```typescript
+// In invoiceController.ts - markAsOverdue
+await createInAppNotification({
+  recipient: invoice.client.toString(),
+  recipientModel: 'Client',
+  category: 'invoice',
+  subject: 'Invoice Overdue',
+  message: `Invoice ${invoiceNumber} is now overdue. Please make payment as soon as possible.`,
+  actions: [
+    {
+      id: 'make_payment',
+      label: 'Pay Now',
+      type: 'api',
+      endpoint: '/api/payments/initiate',
+      method: 'POST',
+      payload: {
+        invoiceId: invoice._id.toString(),
+        method: 'mpesa',
+        amount: invoice.totalAmount - invoice.paidAmount
+      },
+      variant: 'primary',
+      requiresConfirmation: true,
+      confirmationMessage: `Pay ${invoice.totalAmount - invoice.paidAmount} for invoice ${invoiceNumber}?`
+    },
+    {
+      id: 'view_invoice',
+      label: 'View Invoice',
+      type: 'navigate',
+      route: `/invoices/${invoice._id}`,
+      variant: 'secondary'
+    }
+  ],
+  context: {
+    resourceId: invoice._id.toString(),
+    resourceType: 'invoice'
+  },
+  io: req.app.get('io')
+});
+```
+
+---
+
+### Frontend Implementation Pattern
+
+```typescript
+// React component example
+const NotificationCard: React.FC<NotificationCardProps> = ({ notification }) => {
+  const handleAction = async (action: NotificationAction) => {
+    if (action.type === 'api') {
+      try {
+        // Call API endpoint
+        const response = await fetch(action.endpoint!, {
+          method: action.method || 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(action.payload)
+        });
+        
+        if (response.ok) {
+          showToast('Action completed successfully!', 'success');
+          // Remove notification or mark as resolved
+          removeNotification(notificationId);
+        }
+      } catch (error) {
+        showToast('Action failed. Please try again.', 'error');
+      }
+    } else if (action.type === 'navigate') {
+      router.push(action.route);
+    }
+  };
+
+  return (
+    <div className="notification-card">
+      <h4>{notification.subject}</h4>
+      <p>{notification.message}</p>
+      
+      {notification.actions?.map(action => (
+        <button
+          key={action.id}
+          onClick={() => handleAction(action)}
+          className={`btn btn-${action.variant}`}
+        >
+          {action.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+```
+
+---
+
+### Security Considerations
+
+#### 1. Action Authorization
+Actions should respect user permissions
+
+```typescript
+// Backend: Validate action permissions
+const validateActionPermission = async (
+  userId: string,
+  action: NotificationAction,
+  context: NotificationContext
+): Promise<boolean> => {
+  // Check if user has permission to perform this action
+  if (action.id === 'create_invoice') {
+    const user = await User.findById(userId);
+    return ['super_admin', 'finance'].includes(user.role);
+  }
+  return true;
+};
+```
+
+#### 2. Payload Validation
+Always validate action payloads on the backend
+
+```typescript
+// In invoice controller - createInvoice
+export const createInvoice = async (req: Request, res: Response, next: NextFunction) => {
+  // Validate that quotation exists and is accepted
+  const quotation = await Quotation.findById(req.body.quotation);
+  if (!quotation || quotation.status !== 'accepted') {
+    return next(errorHandler(400, 'Invalid quotation for invoice creation'));
+  }
+  // Continue with invoice creation...
+};
+```
+
+#### 3. Action Expiry
+Expired actions should be disabled
+
+```typescript
+// Frontend: Check action expiry
+const isActionValid = (action: NotificationAction, expiresAt?: Date): boolean => {
+  if (!expiresAt) return true;
+  return new Date(expiresAt) > new Date();
+};
+```
+
+---
+
+### Action Types Summary
+
+| Type | Description | Use Case | Example |
+|------|-------------|----------|---------|
+| **`api`** | Direct API call | Immediate actions | Create Invoice, Mark as Paid |
+| **`navigate`** | Page navigation | View details | View Invoice, View Project |
+| **`modal`** | Open modal/drawer | Quick forms | Reply Message, Update Progress |
+| **`confirm`** | Confirmation dialog | Critical actions | Delete, Decline Assignment |
+
+---
+
+### Best Practices
+
+1. **Keep Actions Relevant**: Only add actions that make sense in context
+2. **Limit Actions**: Maximum 2-3 actions per notification
+3. **Clear Labels**: Action buttons should have clear, actionable labels
+4. **Provide Feedback**: Show loading/success/error states
+5. **Follow-Up Notifications**: Send result notifications after actions
+6. **Expiry Dates**: Set expiry for time-sensitive actions (e.g., accept assignment)
+7. **Permissions**: Always validate permissions on backend
+
+---
+
 ## 🛣️ Notification Routes
+
+### Routes Where Notifications Are Triggered
+
+The following routes trigger notifications (see [Notification Instances](#notification-instances) for details):
+
+#### Quotation Routes (`src/routes/quotationRoutes.ts`)
+- `POST /api/quotations` → `createQuotation` (Instance #1)
+- `POST /api/quotations/:id/send` → `sendQuotation` (Instance #2)
+- `POST /api/quotations/:id/accept` → `acceptQuotation` (Instance #3)
+- `POST /api/quotations/:id/reject` → `rejectQuotation` (Instance #4)
+- `PUT /api/quotations/:id` → `updateQuotation` (Instance #5)
+- `POST /api/quotations/:id/convert-to-invoice` → `convertToInvoice` (Instance #6)
+
+#### Invoice Routes (`src/routes/invoiceRoutes.ts`)
+- `POST /api/invoices` → `createInvoice` (Instance #7)
+- `POST /api/invoices/:id/send` → `sendInvoice` (Instance #8)
+- `PATCH /api/invoices/:id/mark-paid` → `markAsPaid` (Instance #9)
+- `PATCH /api/invoices/:id/mark-overdue` → `markAsOverdue` (Instance #10)
+- `PATCH /api/invoices/:id/cancel` → `cancelInvoice` (Instance #11)
+
+#### Payment Routes (`src/routes/paymentRoutes.ts`)
+- `POST /api/payments` → `createPaymentAdmin` (Instance #12)
+- `POST /api/payments/initiate` → `initiatePayment` (Instance #12)
+- `POST /api/payments/mpesa/callback` → `mpesaWebhook` (Instances #13, #14)
+- `POST /api/payments/paystack/webhook` → `paystackWebhook` (Instances #13, #14)
+
+#### Project Routes (`src/routes/projectRoutes.ts`)
+- `POST /api/projects` → `createProject` (Instance #15)
+- `POST /api/projects/:id/assign` → `assignTeamMembers` (Instance #16)
+- `PATCH /api/projects/:id/status` → `updateProjectStatus` (Instance #17)
+- `PATCH /api/projects/:id/progress` → `updateProgress` (Instance #18)
+- `POST /api/projects/:id/milestones` → `addMilestone` (Instance #19)
+- `PUT /api/projects/:id/milestones/:milestoneId` → `updateMilestone` (Instance #20)
+- `POST /api/projects/:id/attachments` → `uploadAttachment` (Instance #21)
+
+#### Client Routes (`src/routes/clientRoutes.ts`)
+- `PATCH /api/clients/:id/status` → `updateClientStatus` (Instance #22)
+
+#### User Routes (`src/routes/userRoutes.ts`)
+- `PATCH /api/users/:id/status` → `updateUserStatus` (Instance #23)
+
+---
 
 ### Base Path: `/api/notifications`
 
