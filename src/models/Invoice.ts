@@ -4,7 +4,7 @@ import type { IInvoice } from '../types/index';
 const invoiceSchema = new Schema<IInvoice>({
   invoiceNumber: {
     type: String,
-    required: [true, 'Invoice number is required'],
+    required: false, // Will be auto-generated in pre-save hook
     unique: true,
     trim: true
   },
@@ -103,6 +103,7 @@ const invoiceSchema = new Schema<IInvoice>({
   timestamps: true
 });
 
+invoiceSchema.index({ invoiceNumber: 1 }); // Already unique, but explicit index helps performance
 invoiceSchema.index({ client: 1 });
 invoiceSchema.index({ status: 1 });
 invoiceSchema.index({ createdBy: 1 });
@@ -111,10 +112,22 @@ invoiceSchema.index({ client: 1, status: 1 });
 invoiceSchema.index({ createdAt: -1 });
 
 invoiceSchema.pre('save', async function(next) {
+  // Only generate invoice number if it doesn't exist
   if (!(this as any).invoiceNumber) {
-    const year = new Date().getFullYear();
-    const count = await mongoose.model('Invoice').countDocuments();
-    (this as any).invoiceNumber = `INV-${year}-${String(count + 1).padStart(4, '0')}`;
+    try {
+      const year = new Date().getFullYear();
+      // Count invoices for the current year to ensure proper sequencing
+      const yearPrefix = `INV-${year}-`;
+      const existingInvoices = await mongoose.model('Invoice').countDocuments({
+        invoiceNumber: new RegExp(`^${yearPrefix}`)
+      });
+      (this as any).invoiceNumber = `${yearPrefix}${String(existingInvoices + 1).padStart(4, '0')}`;
+    } catch (error) {
+      // Fallback to timestamp-based number if counting fails
+      const year = new Date().getFullYear();
+      const timestamp = Date.now().toString().slice(-6);
+      (this as any).invoiceNumber = `INV-${year}-${timestamp}`;
+    }
   }
   next();
 });

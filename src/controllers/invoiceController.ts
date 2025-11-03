@@ -12,7 +12,7 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
     try {
         const { quotation, dueDate }: {
             quotation: string;
-            dueDate?: Date;
+            dueDate?: string | Date;
         } = req.body;
 
         // Validation - only quotation is required
@@ -33,23 +33,53 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "This quotation has already been converted to an invoice"));
         }
 
-        // Get project title from populated project
-        const projectTitle = (quotationExists.project as any)?.title || '';
+        // Get project title from populated project or fetch it separately
+        let projectTitle = '';
+        if (quotationExists.project) {
+            // Check if project is populated or just an ObjectId
+            if (typeof quotationExists.project === 'object' && quotationExists.project !== null && 'title' in quotationExists.project) {
+                projectTitle = (quotationExists.project as any).title || '';
+            } else {
+                // If not populated, fetch the project
+                const project = await Project.findById(quotationExists.project);
+                projectTitle = project?.title || '';
+            }
+        }
+
+        // Convert dueDate string to Date object if provided
+        let parsedDueDate: Date;
+        if (dueDate) {
+            parsedDueDate = typeof dueDate === 'string' ? new Date(dueDate) : dueDate;
+            // Validate the date
+            if (isNaN(parsedDueDate.getTime())) {
+                return next(errorHandler(400, "Invalid due date format. Please use ISO date format (YYYY-MM-DD)"));
+            }
+        } else {
+            // Default to 30 days from now
+            parsedDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        }
+
+        // Ensure items exist and have required fields
+        if (!quotationExists.items || quotationExists.items.length === 0) {
+            return next(errorHandler(400, "Quotation must have at least one item"));
+        }
 
         // Create invoice from quotation data
         const invoice = new Invoice({
             client: quotationExists.client,
             quotation: quotationExists._id,
-            projectTitle: projectTitle,
+            projectTitle: projectTitle || quotationExists.project?.toString() || 'Untitled Project',
             items: quotationExists.items.map((item: any) => ({
                 description: item.description,
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
                 total: item.total
             })),
-            tax: quotationExists.tax,
-            discount: quotationExists.discount,
-            dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
+            subtotal: quotationExists.subtotal || 0,
+            tax: quotationExists.tax || 0,
+            discount: quotationExists.discount || 0,
+            totalAmount: quotationExists.totalAmount || 0,
+            dueDate: parsedDueDate,
             notes: quotationExists.notes,
             createdBy: (req as any).user?._id
         });
@@ -58,7 +88,12 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
 
         // Update project with invoice reference
         if (quotationExists.project) {
-            const project = await Project.findById(quotationExists.project);
+            // Get the project ID (whether it's an ObjectId or populated object)
+            const projectId = typeof quotationExists.project === 'object' && quotationExists.project !== null && '_id' in quotationExists.project
+                ? (quotationExists.project as any)._id
+                : quotationExists.project;
+            
+            const project = await Project.findById(projectId);
             if (project) {
                 project.invoice = invoice._id as any;
                 await project.save();
@@ -83,7 +118,15 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
 
     } catch (error: any) {
         console.error('Create invoice error:', error);
-        next(errorHandler(500, "Server error while creating invoice"));
+        // Log the actual error details for debugging
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+        });
+        // Return more specific error message if available
+        const errorMessage = error.message || "Server error while creating invoice";
+        next(errorHandler(500, errorMessage));
     }
 };
 
@@ -316,7 +359,8 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
         const pdfBuffer = await generateInvoicePDF(invoice);
 
         // Upload PDF to Cloudinary as raw file using stream
-        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
+        // Include .pdf extension in public_id so Cloudinary serves it with correct content type
+        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}.pdf`;
         
         const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
             const uploadStream = cloudinary.uploader.upload_stream(
@@ -328,7 +372,7 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
                     overwrite: true,
                     invalidate: true,
                     access_mode: 'public',
-                    use_filename: true,
+                    use_filename: false,
                     unique_filename: false
                 },
                 (error, result) => {
@@ -349,25 +393,16 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
             uploadStream.end(pdfBuffer);
         });
 
-        // Construct the correct URL for raw files with .pdf extension
+        // Use the secure_url directly from Cloudinary - it will include the .pdf extension
+        // Cloudinary automatically handles the file extension when it's in the public_id
         let pdfUrl = uploadResult.secure_url || uploadResult.url;
         
         if (!pdfUrl) {
-            // Fallback: construct URL manually with .pdf extension
+            // Fallback: construct URL manually
             const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
                 ? uploadResult.public_id 
                 : `sire-tech/invoices/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
-        } else {
-            // Ensure .pdf extension is present in the URL for browser viewing
-            if (!pdfUrl.includes('.pdf')) {
-                // If URL has query params, insert .pdf before the query
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}`;
         }
 
         res.status(200).json({
@@ -408,7 +443,8 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
         const pdfBuffer = await generateInvoicePDF(invoice);
 
         // Upload PDF to Cloudinary
-        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
+        // Include .pdf extension in public_id so Cloudinary serves it with correct content type
+        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}.pdf`;
         
         const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
             const uploadStream = cloudinary.uploader.upload_stream(
@@ -420,7 +456,7 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
                     overwrite: true,
                     invalidate: true,
                     access_mode: 'public',
-                    use_filename: true,
+                    use_filename: false,
                     unique_filename: false
                 },
                 (error, result) => {
@@ -441,21 +477,16 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
             uploadStream.end(pdfBuffer);
         });
 
-        // Construct PDF URL with .pdf extension
+        // Use the secure_url directly from Cloudinary - it will include the .pdf extension
+        // Cloudinary automatically handles the file extension when it's in the public_id
         let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        
         if (!pdfUrl) {
+            // Fallback: construct URL manually
             const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
                 ? uploadResult.public_id 
                 : `sire-tech/invoices/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
-        } else {
-            if (!pdfUrl.includes('.pdf')) {
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}`;
         }
 
         // Send email to client
