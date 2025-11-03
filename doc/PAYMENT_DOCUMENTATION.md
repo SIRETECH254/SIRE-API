@@ -17,33 +17,29 @@
 
 ## 💰 Payment Overview
 
-The SIRE Tech API Payment Management System handles all payment-related operations including payment processing, gateway integration (M-Pesa, Stripe, PayPal), payment tracking, and receipt generation. Payments are linked to invoices and automatically update invoice status.
+The SIRE Tech API Payment Management System handles all payment-related operations including payment processing, gateway integration (M-Pesa, Paystack), payment tracking, and receipt generation. Payments are linked to invoices and automatically update invoice status.
 
 ### Payment System Features
-- **Multiple Payment Gateways** - M-Pesa, Stripe, PayPal, Bank Transfer, Cash
+- **Multiple Payment Gateways** - M-Pesa and Paystack
 - **Auto-numbering** - Unique payment numbers (PAY-2025-0001)
-- **Invoice Integration** - Automatic invoice status updates
+- **Invoice Integration** - Automatic invoice status updates (paid only when fully paid)
 - **Payment Tracking** - Complete payment history
 - **Transaction Recording** - Store gateway transaction IDs
 - **Receipt Generation** - Automatic receipt creation
 - **Email Notifications** - Payment confirmations
-- **Refund Support** - Handle payment refunds
 - **Webhook Handling** - Gateway callback processing
 - **Metadata Storage** - Store additional payment data
 - **Real-time Updates** - Socket.io notifications
+- **Admin Payment Initiation** - Admins can initiate payments on behalf of clients
 
 ### Payment Methods
 1. **M-Pesa** - Mobile money (Safaricom)
-2. **Bank Transfer** - Direct bank transfer
-3. **Stripe** - Credit/debit cards
-4. **PayPal** - PayPal payments
-5. **Cash** - Cash payments
+2. **Paystack** - Card payments (Visa, Mastercard, etc.)
 
 ### Payment Status
 1. **Pending** - Payment initiated, awaiting confirmation
 2. **Completed** - Payment successful
 3. **Failed** - Payment failed
-4. **Refunded** - Payment refunded to client
 
 ---
 
@@ -57,13 +53,23 @@ interface IPayment {
   invoice: ObjectId;             // Reference to Invoice
   client: ObjectId;              // Reference to Client
   amount: number;                // Payment amount
-  paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentMethod: 'mpesa' | 'paystack';
+  status: 'pending' | 'completed' | 'failed';
   transactionId?: string;        // Gateway transaction ID
   reference?: string;            // Payment reference/receipt number
   paymentDate: Date;             // Date of payment
   notes?: string;
   metadata?: Record<string, any>; // Additional payment data
+  processorRefs?: {
+    daraja?: {
+      merchantRequestId?: string;
+      checkoutRequestId?: string;
+    };
+    paystack?: {
+      reference?: string;
+    };
+  };
+  rawPayload?: any;              // Raw webhook payload
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,8 +94,8 @@ paymentNumber: { required: true, unique: true }
 invoice: { required: true, ref: 'Invoice' }
 client: { required: true, ref: 'Client' }
 amount: { required: true, min: 0 }
-paymentMethod: { required: true, enum: ['mpesa', 'bank_transfer', 'stripe', 'paypal', 'cash'] }
-status: { required: true, enum: ['pending', 'completed', 'failed', 'refunded'] }
+paymentMethod: { required: true, enum: ['mpesa', 'paystack'] }
+status: { required: true, enum: ['pending', 'completed', 'failed'] }
 paymentDate: { required: true, type: Date }
 
 // Optional fields
@@ -97,6 +103,8 @@ transactionId: { type: String }
 reference: { type: String }
 notes: { maxlength: 500 }
 metadata: { type: Object }
+processorRefs: { type: Object }
+rawPayload: { type: Object }
 ```
 
 ### Model Implementation
@@ -133,16 +141,16 @@ const paymentSchema = new Schema<IPayment>({
     type: String,
     required: [true, 'Payment method is required'],
     enum: {
-      values: ['mpesa', 'bank_transfer', 'stripe', 'paypal', 'cash'],
-      message: 'Payment method must be mpesa, bank_transfer, stripe, paypal, or cash'
+      values: ['mpesa', 'paystack'],
+      message: 'Payment method must be mpesa or paystack'
     }
   },
   status: {
     type: String,
     required: [true, 'Status is required'],
     enum: {
-      values: ['pending', 'completed', 'failed', 'refunded'],
-      message: 'Status must be pending, completed, failed, or refunded'
+      values: ['pending', 'completed', 'failed'],
+      message: 'Status must be pending, completed, or failed'
     },
     default: 'pending'
   },
@@ -166,6 +174,13 @@ const paymentSchema = new Schema<IPayment>({
   },
   metadata: {
     type: Schema.Types.Mixed
+  },
+  processorRefs: {
+    type: Schema.Types.Mixed,
+    default: {}
+  },
+  rawPayload: {
+    type: Schema.Types.Mixed
   }
 }, {
   timestamps: true
@@ -180,6 +195,8 @@ paymentSchema.index({ paymentMethod: 1 });
 paymentSchema.index({ transactionId: 1 });
 paymentSchema.index({ paymentDate: -1 });
 paymentSchema.index({ client: 1, status: 1 });
+paymentSchema.index({ 'processorRefs.daraja.checkoutRequestId': 1 });
+paymentSchema.index({ 'processorRefs.paystack.reference': 1 });
 
 // Pre-save middleware to generate payment number
 paymentSchema.pre('save', async function(next) {
@@ -207,107 +224,283 @@ import { errorHandler } from '../middleware/errorHandler';
 import Payment from '../models/Payment';
 import Invoice from '../models/Invoice';
 import Client from '../models/Client';
-import { initiateMpesaSTKPush, verifyMpesaTransaction } from '../services/external/daraja';
-import { createStripePaymentIntent, verifyStripeWebhook } from '../services/external/stripe';
-import { sendPaymentConfirmation } from '../services/internal/notificationService';
+import { createPaymentRecord, applySuccessfulPayment, initiateMpesaForInvoice, initiatePaystackForInvoice, validatePaymentAmount } from '../services/internal/paymentService';
+import { parseCallback as parseDarajaCallback, queryStkPushStatus } from '../services/external/darajaService';
+import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../services/external/paystackService';
 ```
 
 ### Functions Overview
 
-#### `createPayment(paymentData)`
-**Purpose:** Record manual payment (Admin only)
+#### `createPaymentAdmin(invoiceId, method, amount)` (Admin Payment Initiation)
+**Purpose:** Admin initiates payment on behalf of client (M-Pesa STK Push or Paystack)
 **Access:** Admin users (super_admin, finance)
 **Validation:**
 - Invoice existence check
 - Amount validation (not exceed remaining balance)
-- Payment method validation
+- Payment method validation (mpesa or paystack)
+- Phone number validation (for M-Pesa)
+- Email validation (for Paystack)
 **Process:**
-- Generate unique payment number
+- Validate invoice and amount
 - Create payment record
-- Update invoice paidAmount
-- Update invoice status
-- Send confirmation email
+- Initiate M-Pesa STK push or Paystack payment
+- Return gateway details for tracking
 - Emit Socket.io event
-**Response:** Complete payment data
+**Response:** Payment data with gateway details
 
 **Controller Implementation:**
 ```typescript
-export const createPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const createPaymentAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { invoice, client, amount, paymentMethod, transactionId, reference, notes }: {
-            invoice: string;
-            client: string;
+        const io = req.app.get('io');
+        const { invoiceId, method, amount, payerPhone, payerEmail }: {
+            invoiceId: string;
+            method: 'mpesa' | 'paystack';
             amount: number;
-            paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-            transactionId?: string;
-            reference?: string;
-            notes?: string;
+            payerPhone?: string;
+            payerEmail?: string;
         } = req.body;
 
-        // Validation
-        if (!invoice || !client || !amount || !paymentMethod) {
-            return next(errorHandler(400, "Invoice, client, amount, and payment method are required"));
+        if (!invoiceId || !method || !amount) {
+            return next(errorHandler(400, "Invoice ID, method, and amount are required"));
         }
 
-        // Check if invoice exists
-        const invoiceExists = await Invoice.findById(invoice);
-        if (!invoiceExists) {
+        const invoice = await Invoice.findById(invoiceId);
+        if (!invoice) {
             return next(errorHandler(404, "Invoice not found"));
         }
 
-        // Check if payment amount exceeds remaining balance
-        const remainingBalance = invoiceExists.totalAmount - invoiceExists.paidAmount;
-        if (amount > remainingBalance) {
-            return next(errorHandler(400, "Payment amount exceeds invoice balance"));
+        if (!validatePaymentAmount(amount, invoice)) {
+            return next(errorHandler(400, "Invalid payment amount"));
         }
 
-        // Create payment
-        const payment = new Payment({
-            invoice,
-            client,
-            amount,
-            paymentMethod,
-            status: 'completed',
-            transactionId,
-            reference,
-            notes,
-            paymentDate: new Date()
-        });
-
-        await payment.save();
-
-        // Update invoice
-        invoiceExists.paidAmount += amount;
-        await invoiceExists.save();
-
-        // Populate references
-        await payment.populate('client', 'firstName lastName email');
-        await payment.populate('invoice', 'invoiceNumber projectTitle totalAmount');
-
-        // Send confirmation
-        await sendPaymentConfirmation(client, payment._id.toString());
-
-        // Emit Socket.io event
-        const io = req.app.get('io');
-        if (io) {
-            io.to(`invoice_${invoice}`).emit('payment_received', {
-                paymentId: payment._id,
-                amount: payment.amount,
-                invoice: invoice
-            });
+        const client = await Client.findById(invoice.client);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
         }
 
-        res.status(201).json({
-            success: true,
-            message: "Payment recorded successfully",
-            data: {
-                payment: payment
+        // Create payment record
+        const payment = await createPaymentRecord({ invoice, method, amount, client });
+
+        // Handle M-Pesa
+        if (method === 'mpesa') {
+            if (!payerPhone) {
+                return next(errorHandler(400, "Phone number is required for M-Pesa payments"));
             }
-        });
+
+            // Normalize phone number to E.164 format (254XXXXXXXXX)
+            const digitsOnly = String(payerPhone).replace(/[^0-9]/g, '');
+            let msisdn = digitsOnly;
+            if (msisdn.startsWith('0')) {
+                msisdn = `254${msisdn.slice(1)}`;
+            }
+            if (!msisdn.startsWith('254')) {
+                if (digitsOnly.startsWith('254')) msisdn = digitsOnly;
+            }
+            if (!/^254\d{9}$/.test(msisdn)) {
+                return next(errorHandler(400, "Invalid Kenyan phone format. Use 2547XXXXXXXX"));
+            }
+
+            const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = `${baseUrl}/api/payments/webhooks/mpesa`;
+
+            const { merchantRequestId, checkoutRequestId } = await initiateMpesaForInvoice({
+            invoice,
+                payment,
+            amount,
+                phone: msisdn,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+                success: true, 
+                message: "M-Pesa payment initiated",
+                data: { 
+                    paymentId: payment._id, 
+                    status: payment.status,
+                    daraja: { merchantRequestId, checkoutRequestId }
+                } 
+            });
+            return;
+        }
+
+        // Handle Paystack
+        if (method === 'paystack') {
+            if (!payerEmail) {
+                return next(errorHandler(400, "Email is required for Paystack payments"));
+            }
+
+            const baseUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = `${baseUrl}/payments/callback`;
+
+            const { authorizationUrl, reference } = await initiatePaystackForInvoice({
+                invoice,
+                payment,
+                amount,
+                email: payerEmail,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+                success: true, 
+                message: "Paystack payment initiated",
+                data: { 
+                paymentId: payment._id,
+                    status: payment.status,
+                    authorizationUrl,
+                    reference 
+                } 
+            });
+            return;
+        }
+
+        return next(errorHandler(400, "Unsupported payment method"));
 
     } catch (error: any) {
-        console.error('Create payment error:', error);
-        next(errorHandler(500, "Server error while creating payment"));
+        console.error('Create payment admin error:', error);
+        next(errorHandler(500, "Server error while initiating payment"));
+    }
+};
+```
+
+#### `initiatePayment(invoiceId, method, amount)` (Client/Admin Payment)
+**Purpose:** Client or admin initiates payment for an invoice (M-Pesa STK Push or Paystack)
+**Access:** Authenticated users (Admin or Client)
+**Validation:**
+- Invoice existence check
+- Amount validation (not exceed remaining balance)
+- Payment method validation (mpesa or paystack)
+- Phone number validation (for M-Pesa)
+- Email validation (for Paystack)
+**Process:**
+- Validate invoice and amount
+- Create payment record
+- Initiate M-Pesa STK push or Paystack payment
+- Return gateway details for tracking
+- Emit Socket.io event
+**Response:** Payment data with gateway details
+
+**Controller Implementation:**
+```typescript
+export const initiatePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const io = req.app.get('io');
+        const { invoiceId, method, amount, payerPhone, payerEmail, callbackUrl }: {
+            invoiceId: string;
+            method: 'mpesa' | 'paystack';
+            amount: number;
+            payerPhone?: string;
+            payerEmail?: string;
+            callbackUrl?: string;
+        } = req.body;
+
+        if (!invoiceId || !method || !amount) {
+            return next(errorHandler(400, "Invoice ID, method, and amount are required"));
+        }
+
+        const invoice = await Invoice.findById(invoiceId);
+        if (!invoice) {
+            return next(errorHandler(404, "Invoice not found"));
+        }
+
+        if (invoice.status === 'paid') {
+            return next(errorHandler(409, "Invoice already paid"));
+        }
+
+        if (!validatePaymentAmount(amount, invoice)) {
+            return next(errorHandler(400, "Invalid payment amount"));
+        }
+
+        // Get client information
+        const client = await Client.findById(invoice.client);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
+
+        // Create payment record
+        const payment = await createPaymentRecord({ invoice, method, amount, client });
+
+        // Handle M-Pesa
+        if (method === 'mpesa') {
+            if (!payerPhone) {
+                return next(errorHandler(400, "Phone number is required for M-Pesa payments"));
+            }
+
+            // Normalize phone number to E.164 format (254XXXXXXXXX)
+            const digitsOnly = String(payerPhone).replace(/[^0-9]/g, '');
+            let msisdn = digitsOnly;
+            if (msisdn.startsWith('0')) {
+                msisdn = `254${msisdn.slice(1)}`;
+            }
+            if (!msisdn.startsWith('254')) {
+                if (digitsOnly.startsWith('254')) msisdn = digitsOnly;
+            }
+            if (!/^254\d{9}$/.test(msisdn)) {
+                return next(errorHandler(400, "Invalid Kenyan phone format. Use 2547XXXXXXXX"));
+            }
+
+            const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = callbackUrl || `${baseUrl}/api/payments/webhooks/mpesa`;
+
+            const { merchantRequestId, checkoutRequestId } = await initiateMpesaForInvoice({
+                invoice,
+                payment,
+                amount,
+                phone: msisdn,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+                success: true, 
+                message: "M-Pesa payment initiated",
+                data: { 
+                paymentId: payment._id,
+                    status: payment.status,
+                    daraja: { merchantRequestId, checkoutRequestId }
+                } 
+            });
+            return;
+        }
+
+        // Handle Paystack
+        if (method === 'paystack') {
+            if (!payerEmail) {
+                return next(errorHandler(400, "Email is required for Paystack payments"));
+            }
+
+            const baseUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = callbackUrl || `${baseUrl}/payments/callback`;
+
+            const { authorizationUrl, reference } = await initiatePaystackForInvoice({
+                invoice,
+                payment,
+                amount,
+                email: payerEmail,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+            success: true,
+                message: "Paystack payment initiated",
+            data: {
+                    paymentId: payment._id, 
+                    status: payment.status,
+                    authorizationUrl,
+                    reference 
+            }
+        });
+            return;
+        }
+
+        return next(errorHandler(400, "Unsupported payment method"));
+
+    } catch (error: any) {
+        console.error('Initiate payment error:', error);
+        next(errorHandler(500, "Server error while initiating payment"));
     }
 };
 ```
@@ -509,274 +702,203 @@ export const deletePayment = async (req: Request, res: Response, next: NextFunct
 };
 ```
 
-#### `initiateMpesaPayment(invoiceId, phone, amount)`
-**Purpose:** Initiate M-Pesa STK push payment
-**Access:** Client or Admin
+
+#### `mpesaWebhook(webhookData)`
+**Purpose:** Handle M-Pesa payment webhook/callback
+**Access:** M-Pesa gateway (webhook - public)
 **Process:**
-- Validate invoice and amount
-- Call M-Pesa Daraja API
-- Create pending payment record
-- Return checkout request ID
-**Response:** Payment initiation data
-
-**Controller Implementation:**
-```typescript
-export const initiateMpesaPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { invoice, phone, amount }: {
-            invoice: string;
-            phone: string;
-            amount: number;
-        } = req.body;
-
-        if (!invoice || !phone || !amount) {
-            return next(errorHandler(400, "Invoice, phone, and amount are required"));
-        }
-
-        // Validate invoice
-        const invoiceExists = await Invoice.findById(invoice);
-        if (!invoiceExists) {
-            return next(errorHandler(404, "Invoice not found"));
-        }
-
-        // Check remaining balance
-        const remainingBalance = invoiceExists.totalAmount - invoiceExists.paidAmount;
-        if (amount > remainingBalance) {
-            return next(errorHandler(400, "Payment amount exceeds invoice balance"));
-        }
-
-        // Create pending payment
-        const payment = new Payment({
-            invoice,
-            client: invoiceExists.client,
-            amount,
-            paymentMethod: 'mpesa',
-            status: 'pending',
-            paymentDate: new Date()
-        });
-
-        await payment.save();
-
-        // Initiate M-Pesa STK push
-        const mpesaResult = await initiateMpesaSTKPush(
-            phone,
-            amount,
-            invoiceExists.invoiceNumber,
-            `Payment for ${invoiceExists.projectTitle}`
-        );
-
-        // Update payment with checkout request ID
-        payment.metadata = { checkoutRequestID: mpesaResult.CheckoutRequestID };
-        await payment.save();
-
-        res.status(200).json({
-            success: true,
-            message: "M-Pesa payment initiated. Please enter your PIN on your phone.",
-            data: {
-                payment: payment,
-                checkoutRequestID: mpesaResult.CheckoutRequestID
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Initiate M-Pesa payment error:', error);
-        next(errorHandler(500, "Server error while initiating M-Pesa payment"));
-    }
-};
-```
-
-#### `mpesaCallback(callbackData)`
-**Purpose:** Handle M-Pesa payment callback
-**Access:** M-Pesa gateway (webhook)
-**Process:**
-- Verify callback signature
-- Find pending payment
+- Parse webhook payload
+- Find payment by checkout request ID
 - Update payment status
-- Update invoice
-- Send confirmation
+- Apply successful payment (updates invoice, emits events)
+- Emit Socket.io events
 **Response:** Acknowledgment
 
 **Controller Implementation:**
 ```typescript
-export const mpesaCallback = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const mpesaWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { Body } = req.body;
-        const { stkCallback } = Body;
+        const io = req.app.get('io');
+        const payload = req.body;
 
-        // Find payment by checkout request ID
-        const payment = await Payment.findOne({
-            'metadata.checkoutRequestID': stkCallback.CheckoutRequestID
+        console.log('===== M-PESA WEBHOOK RECEIVED =====');
+        console.log('Full payload:', JSON.stringify(payload, null, 2));
+        console.log('====================================');
+
+        const parsed = parseDarajaCallback(payload);
+
+        if (payload?.Body?.stkCallback) {
+            io?.emit("callback.received", { 
+                message: payload?.Body?.stkCallback.ResultDesc, 
+                code: payload?.Body?.stkCallback.ResultCode 
+            });
+        }
+
+        if (!parsed.valid) {
+            res.status(400).json({ success: false, message: 'Invalid payload' });
+            return;
+        }
+
+        const payment = await Payment.findOne({ 
+            'processorRefs.daraja.checkoutRequestId': parsed.checkoutRequestId 
         });
 
         if (!payment) {
-            console.error('Payment not found for checkout request ID:', stkCallback.CheckoutRequestID);
-            return res.status(200).json({ ResultCode: 0, ResultDesc: 'Success' });
+            res.status(404).json({ success: false, message: 'Payment not found' });
+            return;
         }
 
-        if (stkCallback.ResultCode === 0) {
-            // Payment successful
-            const metadata = stkCallback.CallbackMetadata.Item;
-            const mpesaReceiptNumber = metadata.find((item: any) => item.Name === 'MpesaReceiptNumber')?.Value;
+        payment.rawPayload = payload;
 
-            payment.status = 'completed';
-            payment.transactionId = mpesaReceiptNumber;
-            await payment.save();
-
-            // Update invoice
+        if (parsed.success) {
             const invoice = await Invoice.findById(payment.invoice);
             if (invoice) {
-                invoice.paidAmount += payment.amount;
-                await invoice.save();
+                await applySuccessfulPayment({ invoice, payment, io, method: 'mpesa' });
             }
-
-            // Send confirmation
-            await sendPaymentConfirmation(payment.client.toString(), payment._id.toString());
         } else {
-            // Payment failed
             payment.status = 'failed';
-            payment.metadata = { ...payment.metadata, error: stkCallback.ResultDesc };
-            await payment.save();
+        await payment.save();
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
         }
 
-        res.status(200).json({ ResultCode: 0, ResultDesc: 'Success' });
+        res.status(200).json({ success: true });
 
     } catch (error: any) {
-        console.error('M-Pesa callback error:', error);
-        res.status(200).json({ ResultCode: 0, ResultDesc: 'Success' });
+        console.error('M-Pesa webhook error:', error);
+        next(errorHandler(500, "Server error processing M-Pesa webhook"));
     }
 };
 ```
 
-#### `initiateStripePayment(invoiceId, amount)`
-**Purpose:** Create Stripe payment intent
-**Access:** Client or Admin
+#### `paystackWebhook(webhookData)`
+**Purpose:** Handle Paystack payment webhook/callback
+**Access:** Paystack gateway (webhook - public)
 **Process:**
-- Validate invoice and amount
-- Create Stripe payment intent
-- Create pending payment record
-- Return client secret
-**Response:** Stripe client secret
-
-**Controller Implementation:**
-```typescript
-export const initiateStripePayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { invoice, amount, currency = 'usd' }: {
-            invoice: string;
-            amount: number;
-            currency?: string;
-        } = req.body;
-
-        if (!invoice || !amount) {
-            return next(errorHandler(400, "Invoice and amount are required"));
-        }
-
-        // Validate invoice
-        const invoiceExists = await Invoice.findById(invoice);
-        if (!invoiceExists) {
-            return next(errorHandler(404, "Invoice not found"));
-        }
-
-        // Create pending payment
-        const payment = new Payment({
-            invoice,
-            client: invoiceExists.client,
-            amount,
-            paymentMethod: 'stripe',
-            status: 'pending',
-            paymentDate: new Date()
-        });
-
-        await payment.save();
-
-        // Create Stripe payment intent
-        const paymentIntent = await createStripePaymentIntent(
-            amount,
-            currency,
-            {
-                invoiceId: invoice,
-                paymentId: payment._id.toString(),
-                invoiceNumber: invoiceExists.invoiceNumber
-            }
-        );
-
-        // Update payment with Stripe payment intent ID
-        payment.metadata = { paymentIntentId: paymentIntent.id };
-        await payment.save();
-
-        res.status(200).json({
-            success: true,
-            message: "Stripe payment initiated",
-            data: {
-                payment: payment,
-                clientSecret: paymentIntent.client_secret
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Initiate Stripe payment error:', error);
-        next(errorHandler(500, "Server error while initiating Stripe payment"));
-    }
-};
-```
-
-#### `stripeWebhook(webhookData)`
-**Purpose:** Handle Stripe webhook events
-**Access:** Stripe gateway (webhook)
-**Process:**
-- Verify webhook signature
-- Handle payment success/failure
-- Update payment and invoice
-- Send confirmation
+- Parse webhook payload
+- Find payment by reference
+- Update payment status
+- Apply successful payment (updates invoice, emits events)
+- Emit Socket.io events
 **Response:** Acknowledgment
 
 **Controller Implementation:**
 ```typescript
-export const stripeWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const paystackWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const signature = req.headers['stripe-signature'] as string;
+        const io = req.app.get('io');
+        const payload = req.body;
 
-        // Verify webhook
-        const event = await verifyStripeWebhook(req.body, signature);
-
-        if (event.type === 'payment_intent.succeeded') {
-            const paymentIntent = event.data.object;
-            const paymentId = paymentIntent.metadata.paymentId;
-
-            const payment = await Payment.findById(paymentId);
-
-            if (payment) {
-                payment.status = 'completed';
-                payment.transactionId = paymentIntent.id;
-                await payment.save();
-
-                // Update invoice
-                const invoice = await Invoice.findById(payment.invoice);
-                if (invoice) {
-                    invoice.paidAmount += payment.amount;
-                    await invoice.save();
-                }
-
-                // Send confirmation
-                await sendPaymentConfirmation(payment.client.toString(), payment._id.toString());
-            }
-        } else if (event.type === 'payment_intent.payment_failed') {
-            const paymentIntent = event.data.object;
-            const paymentId = paymentIntent.metadata.paymentId;
-
-            const payment = await Payment.findById(paymentId);
-            if (payment) {
-                payment.status = 'failed';
-                payment.metadata = { ...payment.metadata, error: paymentIntent.last_payment_error };
-                await payment.save();
-            }
+        const parsed = parsePaystackWebhook(payload);
+        if (!parsed.valid) {
+            res.status(400).json({ success: false, message: 'Invalid payload' });
+            return;
         }
 
-        res.status(200).json({ received: true });
+        const payment = await Payment.findOne({
+            'processorRefs.paystack.reference': parsed.reference 
+        });
+
+        if (!payment) {
+            res.status(404).json({ success: false, message: 'Payment not found' });
+            return;
+        }
+
+        payment.rawPayload = payload;
+
+        if (parsed.success) {
+            const invoice = await Invoice.findById(payment.invoice);
+            if (invoice) {
+                await applySuccessfulPayment({ invoice, payment, io, method: 'paystack' });
+            }
+        } else {
+            payment.status = 'failed';
+            await payment.save();
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+        }
+
+        res.status(200).json({ success: true });
 
     } catch (error: any) {
-        console.error('Stripe webhook error:', error);
-        res.status(400).json({ error: 'Webhook Error' });
+        console.error('Paystack webhook error:', error);
+        next(errorHandler(500, "Server error processing Paystack webhook"));
+    }
+};
+```
+
+#### `queryMpesaByCheckoutId(checkoutRequestId)`
+**Purpose:** Query M-Pesa payment status by checkout request ID
+**Access:** Authenticated users
+**Process:**
+- Find payment by checkout request ID
+- Query Daraja STK Push Status API
+- Update payment status if successful
+- Return payment status
+**Response:** Payment status with update confirmation
+
+**Controller Implementation:**
+```typescript
+export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { checkoutRequestId } = req.params;
+
+        if (!checkoutRequestId) {
+            return next(errorHandler(400, "Checkout request ID is required"));
+        }
+
+        const payment = await Payment.findOne({ 
+            'processorRefs.daraja.checkoutRequestId': checkoutRequestId 
+        });
+
+        if (!payment) {
+            return next(errorHandler(404, "Payment not found for this checkout request"));
+        }
+
+        const result = await queryStkPushStatus({ checkoutRequestId });
+        if (!result.ok) {
+            return next(errorHandler(502, result.error || "Failed to query M-Pesa status"));
+        }
+
+        console.log('===== SAFARICOM QUERY RESULT =====');
+        console.log('Result Code:', result.resultCode);
+        console.log('Result Desc:', result.resultDesc);
+        console.log('==================================');
+
+        const status = result.resultCode === 0 ? 'completed' : 'failed';
+        
+        if (result.resultCode === 0 && payment.status !== 'completed') {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                await applySuccessfulPayment({ 
+                    invoice, 
+                    payment, 
+                    io: req.app.get('io'), 
+                    method: 'mpesa' 
+                });
+            }
+        } else if (result.resultCode !== 0 && payment.status !== 'failed') {
+                payment.status = 'failed';
+                await payment.save();
+            req.app.get('io')?.emit('payment.updated', { 
+                paymentId: payment._id.toString(), 
+                status: payment.status 
+            });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            data: { 
+                status, 
+                resultCode: result.resultCode, 
+                resultDesc: result.resultDesc,
+                paymentId: payment._id,
+                invoiceId: payment.invoice,
+                raw: result.raw
+            } 
+        });
+
+    } catch (error: any) {
+        console.error('Query M-Pesa by checkout ID error:', error);
+        next(errorHandler(500, "Server error while querying M-Pesa status"));
     }
 };
 ```
@@ -838,134 +960,6 @@ export const getInvoicePayments = async (req: Request, res: Response, next: Next
 };
 ```
 
-#### `getPaymentStats()`
-**Purpose:** Get payment statistics
-**Access:** Admin users
-**Response:**
-- Total payments by method
-- Total payments by status
-- Revenue collected
-- Pending payments
-- Failed payment rate
-- Average payment amount
-
-**Controller Implementation:**
-```typescript
-export const getPaymentStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const total = await Payment.countDocuments();
-        const pending = await Payment.countDocuments({ status: 'pending' });
-        const completed = await Payment.countDocuments({ status: 'completed' });
-        const failed = await Payment.countDocuments({ status: 'failed' });
-        const refunded = await Payment.countDocuments({ status: 'refunded' });
-
-        // By payment method
-        const mpesa = await Payment.countDocuments({ paymentMethod: 'mpesa' });
-        const bankTransfer = await Payment.countDocuments({ paymentMethod: 'bank_transfer' });
-        const stripe = await Payment.countDocuments({ paymentMethod: 'stripe' });
-        const paypal = await Payment.countDocuments({ paymentMethod: 'paypal' });
-        const cash = await Payment.countDocuments({ paymentMethod: 'cash' });
-
-        // Calculate revenue
-        const completedPayments = await Payment.find({ status: 'completed' });
-        const totalRevenue = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
-
-        res.status(200).json({
-            success: true,
-            data: {
-                stats: {
-                    total,
-                    byStatus: {
-                        pending,
-                        completed,
-                        failed,
-                        refunded
-                    },
-                    byMethod: {
-                        mpesa,
-                        bankTransfer,
-                        stripe,
-                        paypal,
-                        cash
-                    },
-                    revenue: {
-                        total: totalRevenue,
-                        average: total > 0 ? (totalRevenue / completed).toFixed(2) : 0
-                    },
-                    successRate: total > 0 ? ((completed / total) * 100).toFixed(2) : 0
-                }
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get payment stats error:', error);
-        next(errorHandler(500, "Server error while fetching payment statistics"));
-    }
-};
-```
-
-#### `refundPayment(paymentId, reason)`
-**Purpose:** Process payment refund
-**Access:** Admin users (super_admin, finance)
-**Validation:**
-- Payment must be completed
-- Amount validation
-**Process:**
-- Update payment status to 'refunded'
-- Update invoice paidAmount
-- Initiate gateway refund
-- Send notification
-**Response:** Updated payment
-
-**Controller Implementation:**
-```typescript
-export const refundPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { paymentId } = req.params;
-        const { reason, amount }: { reason?: string; amount?: number } = req.body;
-
-        const payment = await Payment.findById(paymentId);
-
-        if (!payment) {
-            return next(errorHandler(404, "Payment not found"));
-        }
-
-        if (payment.status !== 'completed') {
-            return next(errorHandler(400, "Only completed payments can be refunded"));
-        }
-
-        const refundAmount = amount || payment.amount;
-
-        if (refundAmount > payment.amount) {
-            return next(errorHandler(400, "Refund amount cannot exceed payment amount"));
-        }
-
-        // Update payment status
-        payment.status = 'refunded';
-        payment.notes = reason ? `Refund reason: ${reason}` : payment.notes;
-        await payment.save();
-
-        // Update invoice
-        const invoice = await Invoice.findById(payment.invoice);
-        if (invoice) {
-            invoice.paidAmount -= refundAmount;
-            await invoice.save();
-        }
-
-        res.status(200).json({
-            success: true,
-            message: "Payment refunded successfully",
-            data: {
-                payment: payment
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Refund payment error:', error);
-        next(errorHandler(500, "Server error while refunding payment"));
-    }
-};
-```
 
 ---
 
@@ -974,30 +968,22 @@ export const refundPayment = async (req: Request, res: Response, next: NextFunct
 ### Base Path: `/api/payments`
 
 ```typescript
-// Admin Routes
-POST   /                          // Create manual payment
-GET    /                          // Get all payments (paginated, filtered)
-GET    /stats                     // Get payment statistics
-
 // Payment Management Routes
+POST   /                          // Admin initiate payment for client
+GET    /                          // Get all payments (paginated, filtered)
 GET    /:paymentId                // Get single payment
 PUT    /:paymentId                // Update payment
-DELETE /:paymentId                // Delete payment (super admin)
+DELETE /:paymentId                // Delete payment (super admin only)
+
+// Payment Initiation Routes
+POST   /initiate                  // Client/Admin initiate payment
 
 // M-Pesa Routes
-POST   /mpesa/initiate            // Initiate M-Pesa payment
-POST   /mpesa/callback            // M-Pesa callback (webhook)
+POST   /webhooks/mpesa            // M-Pesa webhook
+GET    /mpesa-status/:checkoutRequestId  // Query M-Pesa status by checkout ID
 
-// Stripe Routes
-POST   /stripe/initiate           // Initiate Stripe payment
-POST   /stripe/webhook            // Stripe webhook
-
-// PayPal Routes
-POST   /paypal/initiate           // Initiate PayPal payment
-POST   /paypal/webhook            // PayPal webhook
-
-// Action Routes
-POST   /:paymentId/refund         // Refund payment
+// Paystack Routes
+POST   /webhooks/paystack         // Paystack webhook
 
 // Query Routes
 GET    /client/:clientId          // Get client payments
@@ -1011,19 +997,17 @@ GET    /invoice/:invoiceId        // Get invoice payments
 ```typescript
 import express from 'express';
 import {
-    createPayment,
+    createPaymentAdmin,
     getAllPayments,
-    getPaymentStats,
     getPayment,
     updatePayment,
     deletePayment,
-    initiateMpesaPayment,
-    mpesaCallback,
-    initiateStripePayment,
-    stripeWebhook,
-    refundPayment,
     getClientPayments,
-    getInvoicePayments
+    getInvoicePayments,
+    initiatePayment,
+    mpesaWebhook,
+    paystackWebhook,
+    queryMpesaByCheckoutId
 } from '../controllers/paymentController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -1031,10 +1015,10 @@ const router = express.Router();
 
 /**
  * @route   POST /api/payments
- * @desc    Create manual payment
+ * @desc    Admin initiate payment for client
  * @access  Private (Admin, Finance)
  */
-router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPayment);
+router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPaymentAdmin);
 
 /**
  * @route   GET /api/payments
@@ -1042,41 +1026,6 @@ router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), 
  * @access  Private (Admin)
  */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), getAllPayments);
-
-/**
- * @route   GET /api/payments/stats
- * @desc    Get payment statistics
- * @access  Private (Admin)
- */
-router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance']), getPaymentStats);
-
-/**
- * @route   POST /api/payments/mpesa/initiate
- * @desc    Initiate M-Pesa payment
- * @access  Private (Client or Admin)
- */
-router.post('/mpesa/initiate', authenticateToken, initiateMpesaPayment);
-
-/**
- * @route   POST /api/payments/mpesa/callback
- * @desc    M-Pesa payment callback
- * @access  Public (M-Pesa gateway)
- */
-router.post('/mpesa/callback', mpesaCallback);
-
-/**
- * @route   POST /api/payments/stripe/initiate
- * @desc    Initiate Stripe payment
- * @access  Private (Client or Admin)
- */
-router.post('/stripe/initiate', authenticateToken, initiateStripePayment);
-
-/**
- * @route   POST /api/payments/stripe/webhook
- * @desc    Stripe webhook
- * @access  Public (Stripe gateway)
- */
-router.post('/stripe/webhook', stripeWebhook);
 
 /**
  * @route   GET /api/payments/client/:clientId
@@ -1114,30 +1063,97 @@ router.put('/:paymentId', authenticateToken, authorizeRoles(['super_admin', 'fin
 router.delete('/:paymentId', authenticateToken, authorizeRoles(['super_admin']), deletePayment);
 
 /**
- * @route   POST /api/payments/:paymentId/refund
- * @desc    Refund payment
- * @access  Private (Admin, Finance)
+ * @route   POST /api/payments/initiate
+ * @desc    Initiate payment (M-Pesa or Paystack)
+ * @access  Private (Authenticated users)
  */
-router.post('/:paymentId/refund', authenticateToken, authorizeRoles(['super_admin', 'finance']), refundPayment);
+router.post('/initiate', authenticateToken, initiatePayment);
+
+/**
+ * @route   POST /api/payments/webhooks/mpesa
+ * @desc    M-Pesa webhook
+ * @access  Public (M-Pesa gateway)
+ */
+router.post('/webhooks/mpesa', mpesaWebhook);
+
+/**
+ * @route   POST /api/payments/webhooks/paystack
+ * @desc    Paystack webhook
+ * @access  Public (Paystack gateway)
+ */
+router.post('/webhooks/paystack', paystackWebhook);
+
+/**
+ * @route   GET /api/payments/mpesa-status/:checkoutRequestId
+ * @desc    Query M-Pesa status by checkout ID
+ * @access  Private (Authenticated users)
+ */
+router.get('/mpesa-status/:checkoutRequestId', authenticateToken, queryMpesaByCheckoutId);
 
 export default router;
 ```
 
 ### Route Details
 
-#### `POST /api/payments`
-**Headers:** `Authorization: Bearer <admin_token>`
+#### `POST /api/payments/initiate`
+**Headers:** `Authorization: Bearer <token>`
 
-**Body:**
+**Body for M-Pesa:**
 ```json
 {
-  "invoice": "invoice_id_here",
-  "client": "client_id_here",
+  "invoiceId": "invoice_id_here",
+  "method": "mpesa",
   "amount": 9550,
-  "paymentMethod": "cash",
-  "paymentDate": "2025-01-01",
-  "reference": "REF-001",
-  "notes": "Cash payment received"
+  "payerPhone": "254712345678"
+}
+```
+
+**Body for Paystack:**
+```json
+{
+  "invoiceId": "invoice_id_here",
+  "method": "paystack",
+      "amount": 9550,
+  "payerEmail": "client@example.com"
+}
+```
+
+**Response (M-Pesa - Pending):**
+```json
+{
+  "success": true,
+  "message": "M-Pesa payment initiated",
+  "data": {
+    "paymentId": "...",
+    "status": "pending",
+    "daraja": {
+      "merchantRequestId": "...",
+      "checkoutRequestId": "..."
+    }
+  }
+}
+```
+
+#### `POST /api/payments` (Admin Payment Initiation)
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body for M-Pesa:**
+```json
+{
+  "invoiceId": "invoice_id_here",
+  "method": "mpesa",
+  "amount": 9550,
+  "payerPhone": "254712345678"
+}
+```
+
+**Body for Paystack:**
+```json
+{
+  "invoiceId": "invoice_id_here",
+  "method": "paystack",
+  "amount": 9550,
+  "payerEmail": "client@example.com"
 }
 ```
 
@@ -1145,19 +1161,13 @@ export default router;
 ```json
 {
   "success": true,
-  "message": "Payment created successfully",
+  "message": "M-Pesa payment initiated",
   "data": {
-    "payment": {
-      "_id": "...",
-      "paymentNumber": "PAY-2025-0001",
-      "invoice": {...},
-      "client": {...},
-      "amount": 9550,
-      "paymentMethod": "cash",
-      "status": "completed",
-      "reference": "REF-001",
-      "paymentDate": "2025-01-01T00:00:00.000Z",
-      "createdAt": "2025-01-01T00:00:00.000Z"
+    "paymentId": "...",
+      "status": "pending",
+    "daraja": {
+      "merchantRequestId": "...",
+      "checkoutRequestId": "..."
     }
   }
 }
@@ -1170,8 +1180,8 @@ export default router;
 - `page` (optional): Page number (default: 1)
 - `limit` (optional): Items per page (default: 10)
 - `search` (optional): Search by payment number or reference
-- `status` (optional): Filter by status (pending, completed, failed, refunded)
-- `paymentMethod` (optional): Filter by payment method (mpesa, bank_transfer, stripe, paypal, cash)
+- `status` (optional): Filter by status (pending, completed, failed)
+- `paymentMethod` (optional): Filter by payment method (mpesa, paystack)
 - `client` (optional): Filter by client ID
 - `invoice` (optional): Filter by invoice ID
 
@@ -1192,74 +1202,11 @@ export default router;
 }
 ```
 
-#### `GET /api/payments/stats`
-**Headers:** `Authorization: Bearer <admin_token>`
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "stats": {
-      "total": 100,
-      "totalAmount": 500000,
-      "byStatus": {
-        "pending": 5,
-        "completed": 85,
-        "failed": 8,
-        "refunded": 2
-      },
-      "byMethod": {
-        "mpesa": 50,
-        "bank_transfer": 20,
-        "stripe": 15,
-        "paypal": 10,
-        "cash": 5
-      }
-    }
-  }
-}
-```
-
-#### `POST /api/payments/mpesa/initiate`
-**Headers:** `Authorization: Bearer <token>`
-
-**Body:**
-```json
-{
-  "invoice": "invoice_id_here",
-  "amount": 9550,
-  "phone": "+254712345678"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "M-Pesa payment initiated successfully",
-  "data": {
-    "payment": {
-      "_id": "...",
-      "paymentNumber": "PAY-2025-0001",
-      "status": "pending",
-      "merchantRequestId": "...",
-      "checkoutRequestId": "..."
-    },
-    "mpesaResponse": {
-      "merchantRequestId": "...",
-      "checkoutRequestId": "...",
-      "responseCode": "0",
-      "responseDescription": "Success. Request accepted for processing"
-    }
-  }
-}
-```
-
-#### `POST /api/payments/mpesa/callback`
+#### `POST /api/payments/webhooks/mpesa`
 **Headers:** Not required (Public webhook endpoint)
 
-**Body:** (Raw webhook payload from M-Pesa)
+**Body:** (Raw webhook payload from M-Pesa Daraja)
 ```json
 {
   "Body": {
@@ -1284,46 +1231,36 @@ export default router;
 **Response:**
 ```json
 {
-  "ResultCode": 0,
-  "ResultDesc": "Accepted"
+  "success": true
 }
 ```
 
-#### `POST /api/payments/stripe/initiate`
+#### `POST /api/payments/webhooks/paystack`
+**Headers:** Not required (Public webhook endpoint)
+
+**Body:** (Raw webhook payload from Paystack)
+
+**Response:** HTTP 200 OK
+
+#### `GET /api/payments/mpesa-status/:checkoutRequestId`
 **Headers:** `Authorization: Bearer <token>`
 
-**Body:**
-```json
-{
-  "invoice": "invoice_id_here",
-  "amount": 9550,
-  "email": "client@example.com"
-}
-```
+**URL Parameter:** `checkoutRequestId` - The M-Pesa checkout request ID
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Stripe payment initiated successfully",
   "data": {
-    "payment": {
-      "_id": "...",
-      "paymentNumber": "PAY-2025-0001",
-      "status": "pending",
-      "reference": "..."
-    },
-    "authorizationUrl": "https://checkout.stripe.com/..."
+    "status": "completed",
+    "resultCode": 0,
+    "resultDesc": "The service request is processed successfully",
+    "paymentId": "...",
+    "invoiceId": "...",
+    "raw": {...}
   }
 }
 ```
-
-#### `POST /api/payments/stripe/webhook`
-**Headers:** Not required (Public webhook endpoint)
-
-**Body:** (Raw webhook payload from Stripe)
-
-**Response:** HTTP 200 OK
 
 #### `GET /api/payments/client/:clientId`
 **Headers:** `Authorization: Bearer <token>`
@@ -1419,10 +1356,9 @@ export default router;
 **Body:**
 ```json
 {
-  "amount": 10000,
-  "paymentDate": "2025-01-02",
   "reference": "REF-002",
-  "notes": "Updated notes"
+  "notes": "Updated notes",
+  "metadata": {}
 }
 ```
 
@@ -1434,7 +1370,8 @@ export default router;
   "data": {
     "payment": {
       "_id": "...",
-      "amount": 10000,
+      "reference": "REF-002",
+      "notes": "Updated notes",
       ...
     }
   }
@@ -1454,172 +1391,352 @@ export default router;
 }
 ```
 
-#### `POST /api/payments/:paymentId/refund`
-**Headers:** `Authorization: Bearer <admin_token>`
-
-**URL Parameter:** `paymentId` - The payment ID
-
-**Body:**
-```json
-{
-  "reason": "Client requested refund"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Payment refunded successfully",
-  "data": {
-    "payment": {
-      "_id": "...",
-      "status": "refunded",
-      ...
-    }
-  }
-}
-```
-
 ---
 
 ## 💳 Payment Gateway Integration
 
-### M-Pesa Integration (Daraja API)
+### Payment Service (Internal)
 
-**File: `src/services/external/daraja.ts`**
+**File: `src/services/internal/paymentService.ts`**
 
-#### Setup
+The payment service provides centralized payment processing logic:
+
+#### Create Payment Record
 ```typescript
-// Environment Variables
-MPESA_CONSUMER_KEY=your_consumer_key
-MPESA_CONSUMER_SECRET=your_consumer_secret
-MPESA_SHORTCODE=your_shortcode
-MPESA_PASSKEY=your_passkey
-MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/mpesa/callback
-```
-
-#### Initiate Payment
-```typescript
-export const initiateMpesaPayment = async (
-  phone: string,
-  amount: number,
-  invoiceNumber: string,
-  description: string
-) => {
-  // 1. Get access token
-  const token = await getAccessToken();
+export const createPaymentRecord = async (params: CreatePaymentRecordParams): Promise<any> => {
+  const payment = await Payment.create({
+    invoice: params.invoice._id,
+    client: params.client?._id,
+    amount: params.amount,
+    paymentMethod: params.method,
+    status: 'pending', // All payments start as pending until webhook confirms
+    processorRefs: {}
+  });
   
-  // 2. Initiate STK push
-  const timestamp = generateTimestamp();
-  const password = generatePassword(timestamp);
-  
-  const response = await axios.post(
-    'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
-    {
-      BusinessShortCode: process.env.MPESA_SHORTCODE,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: 'CustomerPayBillOnline',
-      Amount: amount,
-      PartyA: phone,
-      PartyB: process.env.MPESA_SHORTCODE,
-      PhoneNumber: phone,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: invoiceNumber,
-      TransactionDesc: description
-    },
-    {
-      headers: { Authorization: `Bearer ${token}` }
-    }
-  );
-  
-  return response.data;
+  return payment;
 };
 ```
 
-#### Handle Callback
+#### Apply Successful Payment
 ```typescript
-export const mpesaCallbackHandler = async (callbackData: any) => {
-  const { Body } = callbackData;
-  const { stkCallback } = Body;
+export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParams): Promise<any> => {
+  const { invoice, payment, io, method } = params;
   
-  if (stkCallback.ResultCode === 0) {
-    // Payment successful
-    const metadata = stkCallback.CallbackMetadata.Item;
-    
-    return {
-      success: true,
-      transactionId: metadata.find((item: any) => item.Name === 'MpesaReceiptNumber')?.Value,
-      amount: metadata.find((item: any) => item.Name === 'Amount')?.Value,
-      phone: metadata.find((item: any) => item.Name === 'PhoneNumber')?.Value
-    };
+  // Update payment status
+  payment.status = 'completed';
+  await payment.save();
+
+  // Update invoice paid amount
+  invoice.paidAmount = (invoice.paidAmount || 0) + payment.amount;
+  
+  // Only mark invoice as 'paid' if fully paid (balance is zero)
+  const balance = invoice.totalAmount - invoice.paidAmount;
+  if (balance <= 0) {
+    invoice.status = 'paid';
   } else {
-    // Payment failed
+    invoice.status = 'partially_paid';
+  }
+  
+  await invoice.save();
+
+  // Emit real-time updates
+  if (io) {
+    io.emit('payment.updated', { 
+      paymentId: payment._id.toString(), 
+      status: payment.status,
+      invoiceId: invoice._id.toString()
+    });
+    
+    io.emit('invoice.updated', { 
+      invoiceId: invoice._id.toString(), 
+      status: invoice.status 
+    });
+  }
+
+  return { payment, invoice };
+};
+```
+
+### M-Pesa Integration (Daraja API)
+
+**File: `src/services/external/darajaService.ts`**
+
+#### Environment Variables
+```env
+MPESA_CONSUMER_KEY=your_consumer_key
+MPESA_CONSUMER_SECRET=your_consumer_secret
+MPESA_SHORT_CODE=your_shortcode
+MPESA_PASSKEY=your_passkey
+MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/mpesa
+MPESA_ENV=sandbox  # or production
+API_BASE_URL=https://yourdomain.com
+```
+
+#### Get Access Token
+```typescript
+export const getAccessToken = async (): Promise<string> => {
+  const consumerKey = (process.env.MPESA_CONSUMER_KEY || '').trim();
+  const consumerSecret = (process.env.MPESA_CONSUMER_SECRET || '').trim();
+
+  if (!consumerKey || !consumerSecret) {
+    throw new Error('Daraja credentials not configured');
+  }
+
+  const base = getBaseUrl(); // Returns sandbox or production URL
+  const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+
+  try {
+    const response = await axios.get(
+      `${base}/oauth/v1/generate?grant_type=client_credentials`,
+      { headers: { Authorization: `Basic ${auth}` } }
+    );
+    
+    if (!response.data?.access_token) {
+      throw new Error('Daraja OAuth response missing access_token');
+    }
+    
+    return response.data.access_token;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const message = `Daraja OAuth failed${status ? ` (HTTP ${status})` : ''}`;
+    throw new Error(`${message}: ${JSON.stringify(data)}`);
+  }
+};
+```
+
+#### Helper Functions
+```typescript
+const getBaseUrl = () => {
+  const env = (process.env.MPESA_ENV || 'sandbox').toLowerCase();
+  return env === 'production' 
+    ? 'https://api.safaricom.co.ke' 
+    : 'https://sandbox.safaricom.co.ke';
+};
+
+export const buildTimestamp = (): string => {
+  return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+};
+
+export const buildPassword = (shortCode: string, passkey: string, timestamp: string): string => {
+  return Buffer.from(`${shortCode}${passkey}${timestamp}`).toString('base64');
+};
+```
+
+#### Initiate STK Push
+```typescript
+export const initiateStkPush = async (params: StkPushParams): Promise<StkPushResponse> => {
+  const shortCode = process.env.MPESA_SHORT_CODE;
+  const passkey = process.env.MPESA_PASSKEY;
+
+  if (!shortCode || !passkey) {
+    throw new Error('Daraja short code or passkey not configured');
+  }
+
+  const accessToken = await getAccessToken();
+  const base = getBaseUrl();
+  const timestamp = buildTimestamp();
+  const password = buildPassword(shortCode, passkey, timestamp);
+  const callback = params.callbackUrl || `${process.env.API_BASE_URL}/api/payments/webhooks/mpesa`;
+
+  const payload = {
+    BusinessShortCode: Number(shortCode),
+    Password: password,
+    Timestamp: timestamp,
+    TransactionType: 'CustomerPayBillOnline',
+    Amount: Math.round(params.amount),
+    PartyA: params.phone,
+    PartyB: Number(shortCode),
+    PhoneNumber: params.phone,
+    CallBackURL: callback,
+    AccountReference: String(params.accountReference),
+    TransactionDesc: 'Invoice payment'
+  };
+
+  try {
+    const resp = await axios.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
     return {
-      success: false,
-      error: stkCallback.ResultDesc
+      merchantRequestId: resp.data?.MerchantRequestID,
+      checkoutRequestId: resp.data?.CheckoutRequestID,
+      raw: resp.data
+    };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const message = `Daraja STK Push failed${status ? ` (HTTP ${status})` : ''}`;
+    throw new Error(`${message}: ${JSON.stringify(data)}`);
+  }
+};
+```
+
+#### Parse Callback
+```typescript
+export const parseCallback = (body: any): CallbackParseResult => {
+  const stk = body?.Body?.stkCallback || {};
+  if (!stk) return { valid: false, success: false };
+
+  const resultCode = stk.ResultCode;
+  const success = resultCode === 0;
+  const checkoutRequestId = stk.CheckoutRequestID;
+
+  let amount: number | undefined;
+  let phone: string | undefined;
+  const items = stk?.CallbackMetadata?.Item || [];
+
+  for (const item of items) {
+    if (item?.Name === 'Amount') amount = item?.Value;
+    if (item?.Name === 'PhoneNumber') phone = item?.Value;
+  }
+
+  return {
+    valid: true,
+    success,
+    checkoutRequestId,
+    amount,
+    phone,
+    raw: body,
+    stk
+  };
+};
+```
+
+#### Query STK Push Status
+```typescript
+export const queryStkPushStatus = async (params: StkQueryParams): Promise<StkQueryResponse> => {
+  const shortCode = (params.shortCode || process.env.MPESA_SHORT_CODE || '').trim();
+  const passkey = (params.passkey || process.env.MPESA_PASSKEY || '').trim();
+
+  if (!shortCode || !passkey) {
+    throw new Error('Daraja short code or passkey not configured');
+  }
+
+  const accessToken = await getAccessToken();
+  const base = getBaseUrl();
+  const timestamp = buildTimestamp();
+  const password = buildPassword(shortCode, passkey, timestamp);
+
+  try {
+    const resp = await axios.post(
+      `${base}/mpesa/stkpushquery/v1/query`,
+      {
+        BusinessShortCode: Number(shortCode),
+        Password: password,
+        Timestamp: timestamp,
+        CheckoutRequestID: params.checkoutRequestId
+      },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    return {
+      ok: true,
+      resultCode: resp.data?.ResultCode,
+      resultDesc: resp.data?.ResultDesc,
+      raw: resp.data
+    };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    return {
+      ok: false,
+      error: `Daraja STK Query failed${status ? ` (HTTP ${status})` : ''}`,
+      details: JSON.stringify(data)
     };
   }
 };
 ```
 
-### Stripe Integration
+### Paystack Integration
 
-**File: `src/services/external/stripe.ts`**
+**File: `src/services/external/paystackService.ts`**
 
-#### Setup
-```typescript
-import Stripe from 'stripe';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: '2024-11-20.acacia'
-});
+#### Environment Variables
+```env
+PAYSTACK_SECRET_KEY=sk_test_...  # or sk_live_... for production
+PAYSTACK_CURRENCY=KES
+FRONTEND_BASE_URL=https://yourdomain.com  # For redirect after payment
 ```
 
-#### Create Payment Intent
+#### Initiate Transaction
 ```typescript
-export const createPaymentIntent = async (
-  amount: number,
-  currency: string = 'usd',
-  metadata: any = {}
-) => {
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(amount * 100), // Stripe uses cents
-    currency,
-    metadata,
-    automatic_payment_methods: {
-      enabled: true
-    }
-  });
-  
-  return paymentIntent;
+export const initTransaction = async (params: PaystackTransactionParams): Promise<PaystackTransactionResponse> => {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) throw new Error('Paystack secret not configured');
+
+  try {
+    const resp = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: params.email,
+        amount: Math.round(params.amount * 100), // Convert to kobo/cents
+        currency: params.currency || 'KES',
+        reference: params.reference,
+        callback_url: params.callbackUrl
+      },
+      { headers: { Authorization: `Bearer ${secret}` } }
+    );
+
+    return {
+      authorizationUrl: resp.data?.data?.authorization_url,
+      reference: resp.data?.data?.reference,
+      raw: resp.data
+    };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    const message = `Paystack transaction initialization failed${status ? ` (HTTP ${status})` : ''}`;
+    throw new Error(`${message}: ${JSON.stringify(data)}`);
+  }
 };
 ```
 
-#### Handle Webhook
+#### Parse Webhook
 ```typescript
-export const handleStripeWebhook = async (
-  payload: string,
-  signature: string
-) => {
-  const event = stripe.webhooks.constructEvent(
-    payload,
-    signature,
-    process.env.STRIPE_WEBHOOK_SECRET as string
-  );
+export const parseWebhook = (body: any): PaystackWebhookParseResult => {
+  const event = body?.event;
+  const reference = body?.data?.reference;
+  const status = body?.data?.status;
+  const success = event === 'charge.success' || status === 'success';
   
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      // Handle successful payment
-      return { success: true, data: event.data.object };
-      
-    case 'payment_intent.payment_failed':
-      // Handle failed payment
-      return { success: false, error: event.data.object };
-      
-    default:
-      return { success: true, message: 'Event not handled' };
+  return {
+    valid: !!reference,
+    success,
+    reference,
+    raw: body
+  };
+};
+```
+
+#### Verify Transaction
+```typescript
+export const verifyTransaction = async (params: VerifyTransactionParams): Promise<VerifyTransactionResponse> => {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) throw new Error('Paystack secret not configured');
+
+  try {
+    const resp = await axios.get(
+      `https://api.paystack.co/transaction/verify/${params.reference}`,
+      { headers: { Authorization: `Bearer ${secret}` } }
+    );
+
+    const data = resp.data?.data;
+    return {
+      success: data?.status === 'success',
+      amount: data?.amount ? data.amount / 100 : undefined, // Convert from kobo/cents
+      currency: data?.currency,
+      status: data?.status,
+      raw: resp.data
+    };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    return {
+      success: false,
+      error: `Paystack verification failed${status ? ` (HTTP ${status})` : ''}`,
+      raw: data
+    };
   }
 };
 ```
@@ -1628,60 +1745,61 @@ export const handleStripeWebhook = async (
 
 ## 📝 API Examples
 
-### Create Manual Payment
+### Initiate Payment (M-Pesa)
+```bash
+curl -X POST http://localhost:5000/api/payments/initiate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "invoiceId": "invoice_id_here",
+    "method": "mpesa",
+    "amount": 5000,
+    "payerPhone": "254712345678"
+  }'
+```
+
+### Initiate Payment (Paystack)
+```bash
+curl -X POST http://localhost:5000/api/payments/initiate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "invoiceId": "invoice_id_here",
+    "method": "paystack",
+    "amount": 5000,
+    "payerEmail": "client@example.com"
+  }'
+```
+
+### Query M-Pesa by Checkout ID
+```bash
+curl -X GET http://localhost:5000/api/payments/mpesa-status/:checkoutRequestId \
+  -H "Authorization: Bearer <token>"
+```
+
+### Admin Initiate Payment (M-Pesa)
 ```bash
 curl -X POST http://localhost:5000/api/payments \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <admin_token>" \
   -d '{
-    "invoice": "invoice_id_here",
-    "client": "client_id_here",
+    "invoiceId": "invoice_id_here",
+    "method": "mpesa",
     "amount": 5000,
-    "paymentMethod": "bank_transfer",
-    "transactionId": "BANK123456",
-    "reference": "Transfer from ABC Bank",
-    "notes": "Full payment received"
+    "payerPhone": "254712345678"
   }'
 ```
 
-### Initiate M-Pesa Payment
+### Admin Initiate Payment (Paystack)
 ```bash
-curl -X POST http://localhost:5000/api/payments/mpesa/initiate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <client_token>" \
-  -d '{
-    "invoice": "invoice_id_here",
-    "phone": "+254712345678",
-    "amount": 5000
-  }'
-```
-
-### Initiate Stripe Payment
-```bash
-curl -X POST http://localhost:5000/api/payments/stripe/initiate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <client_token>" \
-  -d '{
-    "invoice": "invoice_id_here",
-    "amount": 5000,
-    "currency": "usd"
-  }'
-```
-
-### Get Payment Statistics
-```bash
-curl -X GET http://localhost:5000/api/payments/stats \
-  -H "Authorization: Bearer <admin_token>"
-```
-
-### Refund Payment
-```bash
-curl -X POST http://localhost:5000/api/payments/<paymentId>/refund \
+curl -X POST http://localhost:5000/api/payments \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <admin_token>" \
   -d '{
-    "reason": "Client requested refund",
-    "amount": 5000
+    "invoiceId": "invoice_id_here",
+    "method": "paystack",
+    "amount": 5000,
+    "payerEmail": "client@example.com"
   }'
 ```
 
@@ -1708,10 +1826,10 @@ curl -X POST http://localhost:5000/api/payments/<paymentId>/refund \
 - **Invoice Validation** - Verify invoice exists and is valid
 
 ### Gateway Security
-- **M-Pesa** - OAuth token authentication, callback URL validation
-- **Stripe** - Webhook signature verification, API key security
-- **PayPal** - IPN verification, API credentials
+- **M-Pesa** - OAuth token authentication, callback URL validation, STK push status query
+- **Paystack** - Webhook signature verification, API key security
 - **HTTPS Only** - All gateway communications over HTTPS
+- **Webhook Validation** - Parse and validate all gateway callbacks
 
 ---
 
@@ -1782,22 +1900,16 @@ MPESA_CONSUMER_KEY=your_consumer_key
 MPESA_CONSUMER_SECRET=your_consumer_secret
 MPESA_SHORTCODE=174379
 MPESA_PASSKEY=your_passkey
-MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/mpesa/callback
+MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/mpesa
 MPESA_ENVIRONMENT=sandbox  # or production
+API_BASE_URL=https://yourdomain.com  # For callback URL construction
 ```
 
-### Stripe Configuration
+### Paystack Configuration
 ```env
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PUBLISHABLE_KEY=pk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-```
-
-### PayPal Configuration
-```env
-PAYPAL_CLIENT_ID=your_client_id
-PAYPAL_CLIENT_SECRET=your_client_secret
-PAYPAL_MODE=sandbox  # or live
+PAYSTACK_SECRET_KEY=sk_test_...
+PAYSTACK_CURRENCY=KES
+FRONTEND_BASE_URL=https://yourdomain.com  # For redirect after payment
 ```
 
 ---
@@ -1805,25 +1917,27 @@ PAYPAL_MODE=sandbox  # or live
 ## 📊 Payment Flow Diagrams
 
 ### M-Pesa Payment Flow
-1. Client initiates payment → API creates pending payment
-2. API calls M-Pesa Daraja STK push
+1. Client initiates payment via `/api/payments/initiate` → API creates pending payment
+2. API calls M-Pesa Daraja STK push via `initiateMpesaForInvoice`
 3. Client receives M-Pesa prompt on phone
 4. Client enters PIN
 5. M-Pesa processes payment
-6. M-Pesa sends callback to API
-7. API updates payment status
-8. API updates invoice
-9. API sends confirmation to client
+6. M-Pesa sends webhook to `/api/payments/webhooks/mpesa`
+7. API parses webhook via `parseDarajaCallback`
+8. API calls `applySuccessfulPayment` to update payment and invoice (status: paid or partially_paid)
+9. Socket.io emits `payment.updated` and `invoice.updated` events
+10. Frontend can poll `/api/payments/mpesa-status/:checkoutRequestId` as fallback
 
-### Stripe Payment Flow
-1. Client initiates payment → API creates payment intent
-2. API returns client secret
-3. Frontend collects card details
-4. Stripe processes payment
-5. Stripe sends webhook to API
-6. API updates payment status
-7. API updates invoice
-8. API sends confirmation to client
+### Paystack Payment Flow
+1. Client initiates payment via `/api/payments/initiate` → API creates pending payment
+2. API calls Paystack via `initiatePaystackForInvoice`
+3. API returns `authorizationUrl` to frontend
+4. User redirected to Paystack checkout page
+5. User completes payment on Paystack
+6. Paystack sends webhook to `/api/payments/webhooks/paystack`
+7. API parses webhook via `parsePaystackWebhook`
+8. API calls `applySuccessfulPayment` to update payment and invoice (status: paid or partially_paid)
+9. Socket.io emits `payment.updated` and `invoice.updated` events
 
 ---
 
@@ -1836,11 +1950,11 @@ Test Amount: Any amount (1-70000)
 Test PIN: Use your Safaricom PIN on sandbox
 ```
 
-### Stripe Test Cards
+### Paystack Test Cards
 ```
-Success: 4242 4242 4242 4242
-Decline: 4000 0000 0000 0002
-Requires Authentication: 4000 0025 0000 3155
+Success: 4084 0840 8408 4081
+Decline: 5060 6666 6666 6666
+Requires Authentication: 5078 5078 5078 5078
 ```
 
 ---
