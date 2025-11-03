@@ -832,8 +832,8 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
 - Find payment by checkout request ID
 - Query Daraja STK Push Status API
 - Update payment status if successful
-- Return payment status
-**Response:** Payment status with update confirmation
+- Return M-Pesa query result
+**Response:** M-Pesa query result with resultCode, resultDesc, paymentId, invoiceId, and raw data
 
 **Controller Implementation:**
 ```typescript
@@ -862,8 +862,6 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         console.log('Result Code:', result.resultCode);
         console.log('Result Desc:', result.resultDesc);
         console.log('==================================');
-
-        const status = result.resultCode === 0 ? 'completed' : 'failed';
         
         if (result.resultCode === 0 && payment.status !== 'completed') {
                 const invoice = await Invoice.findById(payment.invoice);
@@ -887,7 +885,6 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         res.status(200).json({ 
             success: true, 
             data: { 
-                status, 
                 resultCode: result.resultCode, 
                 resultDesc: result.resultDesc,
                 paymentId: payment._id,
@@ -1252,7 +1249,6 @@ export default router;
 {
   "success": true,
   "data": {
-    "status": "completed",
     "resultCode": 0,
     "resultDesc": "The service request is processed successfully",
     "paymentId": "...",

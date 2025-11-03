@@ -505,8 +505,6 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         console.log('Result Code:', result.resultCode);
         console.log('Result Desc:', result.resultDesc);
         console.log('==================================');
-
-        const status = result.resultCode === 0 ? 'completed' : 'failed';
         
         if (result.resultCode === 0 && payment.status !== 'completed') {
             const invoice = await Invoice.findById(payment.invoice);
@@ -530,7 +528,6 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         res.status(200).json({ 
             success: true, 
             data: { 
-                status, 
                 resultCode: result.resultCode, 
                 resultDesc: result.resultDesc,
                 paymentId: payment._id,
