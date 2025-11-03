@@ -35,12 +35,16 @@ export interface InitiatePaystackParams {
 }
 
 export const createPaymentRecord = async (params: CreatePaymentRecordParams): Promise<any> => {
+  // Generate payment number before creating the payment
+  const paymentNumber = await generatePaymentNumber();
+  
   const payment = await Payment.create({
+    paymentNumber,
     invoice: params.invoice._id,
     client: params.client?._id,
     amount: params.amount,
     paymentMethod: params.method,
-    status: ['cash', 'bank_transfer'].includes(params.method) ? 'completed' : 'pending',
+    status: 'pending', // All payments start as pending until webhook confirms
     processorRefs: {}
   });
   
@@ -54,9 +58,17 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
   payment.status = 'completed';
   await payment.save();
 
-  // Update invoice status
-  invoice.status = 'paid';
+  // Update invoice paid amount
   invoice.paidAmount = (invoice.paidAmount || 0) + payment.amount;
+  
+  // Only mark invoice as 'paid' if fully paid (balance is zero)
+  const balance = invoice.totalAmount - invoice.paidAmount;
+  if (balance <= 0) {
+    invoice.status = 'paid';
+  } else {
+    invoice.status = 'partially_paid';
+  }
+  
   await invoice.save();
 
   // Update client if exists
@@ -130,19 +142,21 @@ export const initiatePaystackForInvoice = async (params: InitiatePaystackParams)
   return res;
 };
 
-export const generatePaymentNumber = (): string => {
+export const generatePaymentNumber = async (): Promise<string> => {
   const year = new Date().getFullYear();
-  const timestamp = Date.now().toString().slice(-6);
-  return `PAY-${year}-${timestamp}`;
+  // Count documents created in the current year
+  const startOfYear = new Date(year, 0, 1);
+  const count = await Payment.countDocuments({
+    createdAt: { $gte: startOfYear }
+  });
+  return `PAY-${year}-${String(count + 1).padStart(4, '0')}`;
 };
 
 export const calculatePaymentFees = (amount: number, method: string): number => {
   // Calculate payment processing fees based on method
   const feeRates: { [key: string]: number } = {
     'mpesa': 0.015, // 1.5% for M-Pesa
-    'paystack': 0.035, // 3.5% for Paystack
-    'bank_transfer': 0.005, // 0.5% for bank transfer
-    'cash': 0 // No fees for cash
+    'paystack': 0.035 // 3.5% for Paystack
   };
   
   const rate = feeRates[method] || 0;

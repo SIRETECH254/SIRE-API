@@ -203,8 +203,8 @@ export interface IPayment extends Document {
   invoice: Types.ObjectId; // Reference to Invoice
   client: Types.ObjectId; // Reference to Client
   amount: number;
-  paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentMethod: 'mpesa' | 'paystack';
+  status: 'pending' | 'completed' | 'failed';
   transactionId?: string;
   reference?: string;
   paymentDate: Date;

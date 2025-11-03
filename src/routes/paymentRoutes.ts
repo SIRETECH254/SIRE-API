@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-    createPayment,
+    createPaymentAdmin,
     getAllPayments,
     getPayment,
     updatePayment,
@@ -10,7 +10,6 @@ import {
     initiatePayment,
     mpesaWebhook,
     paystackWebhook,
-    queryMpesaStatus,
     queryMpesaByCheckoutId
 } from '../controllers/paymentController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
@@ -40,12 +39,12 @@ const router = express.Router();
  *         name: status
  *         schema:
  *           type: string
- *           enum: [pending, completed, failed, refunded]
+ *           enum: [pending, completed, failed]
  *       - in: query
  *         name: paymentMethod
  *         schema:
  *           type: string
- *           enum: [mpesa, bank_transfer, stripe, paypal, cash]
+ *           enum: [mpesa, paystack]
  *     responses:
  *       '200':
  *         description: List of payments
@@ -93,7 +92,7 @@ const router = express.Router();
  *                 example: 1000
  *               paymentMethod:
  *                 type: string
- *                 enum: [mpesa, bank_transfer, stripe, paypal, cash]
+ *                 enum: [mpesa, paystack]
  *                 example: "mpesa"
  *               transactionId:
  *                 type: string
@@ -231,7 +230,7 @@ const router = express.Router();
  *                 type: number
  *               status:
  *                 type: string
- *                 enum: [pending, completed, failed, refunded]
+ *                 enum: [pending, completed, failed]
  *               transactionId:
  *                 type: string
  *               reference:
@@ -287,7 +286,7 @@ const router = express.Router();
  *         description: Webhook processed successfully
  */
 // Basic payment routes
-router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPayment);
+router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPaymentAdmin);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), getAllPayments);
 router.get('/client/:clientId', authenticateToken, getClientPayments);
 router.get('/invoice/:invoiceId', authenticateToken, getInvoicePayments);
@@ -303,7 +302,6 @@ router.post('/webhooks/mpesa', mpesaWebhook);
 router.post('/webhooks/paystack', paystackWebhook);
 
 // M-Pesa status query routes
-router.get('/:paymentId/mpesa-status', authenticateToken, queryMpesaStatus);
 router.get('/mpesa-status/:checkoutRequestId', authenticateToken, queryMpesaByCheckoutId);
 
 export default router;

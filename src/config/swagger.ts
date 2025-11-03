@@ -353,12 +353,12 @@ const options = {
             },
             paymentMethod: {
               type: 'string',
-              enum: ['mpesa', 'bank_transfer', 'stripe', 'paypal', 'cash'],
+              enum: ['mpesa', 'paystack'],
               description: 'Payment method'
             },
             status: {
               type: 'string',
-              enum: ['pending', 'completed', 'failed', 'refunded'],
+              enum: ['pending', 'completed', 'failed'],
               description: 'Payment status'
             },
             transactionId: {
