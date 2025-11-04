@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import User from "../models/User";
+import Client from "../models/Client";
 import { errorHandler } from "./errorHandler";
 import type { IUserResponse } from "../types/index";
 
@@ -162,5 +163,67 @@ export const optionalAuth = async (req: Request, res: Response, next: NextFuncti
     } catch (error: any) {
         // Don't fail on token errors, just continue without user
         next();
+    }
+};
+
+// Middleware to authenticate Client token (for client-specific routes)
+export const authenticateClientToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const authHeader = req.headers.authorization;
+        const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+        if (!token) {
+            return next(errorHandler(401, "Access token required"));
+        }
+
+        // Verify token
+        const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
+
+        // Try to find client first
+        let client = await Client.findById(decoded.userId);
+
+        if (client) {
+            if (!client.isActive) {
+                return next(errorHandler(401, "Client account is deactivated"));
+            }
+            // Add client to request object as user (for compatibility)
+            req.user = {
+                _id: client._id.toString(),
+                firstName: client.firstName,
+                lastName: client.lastName,
+                email: client.email,
+                role: 'client' as any,
+                phone: client.phone,
+                isActive: client.isActive,
+                emailVerified: client.emailVerified,
+                createdAt: client.createdAt,
+                updatedAt: client.updatedAt,
+                fullName: `${client.firstName} ${client.lastName}`
+            } as IUserResponse;
+            return next();
+        }
+
+        // If not a client, try to find user
+        const user = await User.findById(decoded.userId);
+
+        if (!user) {
+            return next(errorHandler(401, "User or client not found"));
+        }
+
+        if (!user.isActive) {
+            return next(errorHandler(401, "User account is deactivated"));
+        }
+
+        // Add user to request object
+        req.user = user as IUserResponse;
+        next();
+
+    } catch (error: any) {
+        if (error.name === 'JsonWebTokenError') {
+            return next(errorHandler(401, "Invalid token"));
+        } else if (error.name === 'TokenExpiredError') {
+            return next(errorHandler(401, "Token expired"));
+        }
+        return next(errorHandler(500, "Authentication error"));
     }
 };

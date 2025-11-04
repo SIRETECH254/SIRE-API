@@ -459,3 +459,137 @@ export const sendInvoiceEmail = async (email: string, invoice: any, pdfUrl: stri
     }
 };
 
+// Send contact form notification to admin
+export const sendContactFormNotification = async (email: string, name: string, subject: string, message: string) => {
+    if (!email || !name || !subject || !message) {
+        throw errorHandler(400, "Email, name, subject, and message are required for sending contact form notification");
+    }
+
+    try {
+        const transporter = createTransporter();
+        const adminEmail = process.env.FROM_EMAIL || process.env.SMTP_USER || 'admin@siretech.com';
+
+        const mailOptions = {
+            from: `"SIRE Tech Contact Form" <${process.env.SMTP_USER}>`,
+            to: adminEmail,
+            subject: `New Contact Form Submission: ${subject}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">New Contact Form Submission</p>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Contact Form Message</h2>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>From:</strong> ${name}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Email:</strong> ${email}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Subject:</strong> ${subject}</p>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                            <h3 style="color: #333; margin-top: 0;">Message:</h3>
+                            <p style="color: #666; line-height: 1.6; white-space: pre-wrap;">${message}</p>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            Please reply to this message at your earliest convenience.
+                        </p>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated notification from the contact form.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
+                if (error) {
+                    console.error('Error sending contact form notification:', error);
+                    reject(errorHandler(500, `Failed to send contact form notification: ${error.message}`));
+                } else {
+                    console.log("Contact form notification sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
+
+    } catch (error: any) {
+        console.error('Error sending contact form notification:', error);
+        throw errorHandler(500, `Failed to send contact form notification: ${error.message}`);
+    }
+};
+
+// Send contact form reply email to sender
+export const sendContactReplyEmail = async (email: string, name: string, subject: string, reply: string) => {
+    if (!email || !name || !subject || !reply) {
+        throw errorHandler(400, "Email, name, subject, and reply are required for sending contact reply email");
+    }
+
+    try {
+        const transporter = createTransporter();
+
+        const mailOptions = {
+            from: `"SIRE Tech Support" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: `Re: ${subject}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">Your Business Management Partner</p>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Reply to Your Inquiry</h2>
+                        <p style="color: #666; margin-bottom: 20px;">Hi ${name},</p>
+                        <p style="color: #666; margin-bottom: 25px;">
+                            Thank you for contacting us. We have received your message regarding "${subject}" and here is our response:
+                        </p>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+                            <p style="color: #666; line-height: 1.6; white-space: pre-wrap; margin: 0;">${reply}</p>
+                        </div>
+                        
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            If you have any further questions or need additional assistance, please don't hesitate to contact us again.
+                        </p>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000'}" style="background: #2563eb; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                                Visit Our Website
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated reply to your contact form submission.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        return new Promise((resolve, reject) => {
+            transporter.sendMail(mailOptions, (error: any, info: any) => {
+                if (error) {
+                    console.error('Error sending contact reply email:', error);
+                    reject(errorHandler(500, `Failed to send contact reply email: ${error.message}`));
+                } else {
+                    console.log("Contact reply email sent: " + info.response);
+                    resolve({ success: true, messageId: info.messageId });
+                }
+            });
+        });
+
+    } catch (error: any) {
+        console.error('Error sending contact reply email:', error);
+        throw errorHandler(500, `Failed to send contact reply email: ${error.message}`);
+    }
+};
+

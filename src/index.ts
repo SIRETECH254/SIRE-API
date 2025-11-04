@@ -16,6 +16,9 @@ import quotationRoutes from './routes/quotationRoutes';
 import invoiceRoutes from './routes/invoiceRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import testimonialRoutes from './routes/testimonialRoutes';
+import contactRoutes from './routes/contactRoutes';
+import dashboardRoutes from './routes/dashboardRoutes';
 
 
 const app = express();
@@ -100,6 +103,12 @@ app.use("/api/invoices", invoiceRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/testimonials", testimonialRoutes);
+
+app.use("/api/contact", contactRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: express.Request, res: express.Response) => {
@@ -186,7 +195,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Make io and socketConnections available to controllers
+// Make io and socketConnect ions available to controllers
 app.set('io', io);
 
 app.set('socketConnections', socketConnections);
@@ -214,13 +223,13 @@ app.get('/api', (req: express.Request, res: express.Response) => {
       clients: '/api/clients',
       projects: '/api/projects',
       services: '/api/services',
-      quotations: '/api/quotations (coming soon)',
-      invoices: '/api/invoices (coming soon)',
-      payments: '/api/payments (coming soon)',
-      testimonials: '/api/testimonials (coming soon)',
-      notifications: '/api/notifications (coming soon)',
-      contact: '/api/contact (coming soon)',
-      dashboard: '/api/dashboard (coming soon)'
+      quotations: '/api/quotations',
+      invoices: '/api/invoices',
+      payments: '/api/payments',
+      testimonials: '/api/testimonials',
+      notifications: '/api/notifications',
+      contact: '/api/contact',
+      dashboard: '/api/dashboard'
     }
   });
 });
