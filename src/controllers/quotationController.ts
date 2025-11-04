@@ -4,6 +4,10 @@ import Quotation from '../models/Quotation';
 import Client from '../models/Client';
 import Invoice from '../models/Invoice';
 import Project from '../models/Project';
+import { generateQuotationPDF } from '../utils/generatePDF';
+import { v2 as cloudinary } from 'cloudinary';
+import { sendQuotationEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -12,7 +16,7 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
             items: Array<{ description: string; quantity: number; unitPrice: number; }>;
             tax?: number;
             discount?: number;
-            validUntil: Date;
+            validUntil: Date | string;
             notes?: string;
         } = req.body;
 
@@ -26,15 +30,72 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
             return next(errorHandler(404, "Project not found"));
         }
 
+        // Validate that project has a client
+        if (!projectExists.client) {
+            return next(errorHandler(400, "Project must have an associated client"));
+        }
+
+        // Convert validUntil to Date if it's a string
+        let validUntilDate: Date;
+        if (typeof validUntil === 'string') {
+            validUntilDate = new Date(validUntil);
+            // Validate the date is valid
+            if (isNaN(validUntilDate.getTime())) {
+                return next(errorHandler(400, "Invalid validUntil date format. Please use ISO date format (YYYY-MM-DD)"));
+            }
+        } else if (validUntil instanceof Date) {
+            validUntilDate = validUntil;
+        } else {
+            return next(errorHandler(400, "validUntil is required and must be a valid date"));
+        }
+
+        // Validate items structure
+        for (const item of items) {
+            if (!item.description || typeof item.quantity !== 'number' || typeof item.unitPrice !== 'number') {
+                return next(errorHandler(400, "Each item must have description, quantity (number), and unitPrice (number)"));
+            }
+            if (item.quantity <= 0) {
+                return next(errorHandler(400, "Item quantity must be greater than 0"));
+            }
+            if (item.unitPrice < 0) {
+                return next(errorHandler(400, "Item unitPrice cannot be negative"));
+            }
+        }
+
+        // Calculate item totals (required before validation)
+        const itemsWithTotals = items.map(item => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            total: item.quantity * item.unitPrice
+        }));
+
+        // Calculate subtotal
+        const subtotal = itemsWithTotals.reduce((sum, item) => sum + item.total, 0);
+
+        // Calculate total amount
+        const taxAmount = tax || 0;
+        const discountAmount = discount || 0;
+        const totalAmount = subtotal + taxAmount - discountAmount;
+
+        // Generate quotation number
+        const year = new Date().getFullYear();
+        const count = await Quotation.countDocuments();
+        const quotationNumber = `QT-${year}-${String(count + 1).padStart(4, '0')}`;
+
         // Create quotation with project reference
         // Client is inherited from project
+        // Note: All calculated fields are included to satisfy Mongoose validation
         const quotation = new Quotation({
+            quotationNumber,
             project: projectExists._id,
             client: projectExists.client,
-            items,
-            tax: tax || 0,
-            discount: discount || 0,
-            validUntil,
+            items: itemsWithTotals,
+            subtotal,
+            tax: taxAmount,
+            discount: discountAmount,
+            totalAmount,
+            validUntil: validUntilDate,
             notes,
             createdBy: (req as any).user?._id
         });
@@ -49,6 +110,26 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
 
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'New Quotation Created',
+                message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(201).json({
             success: true,
             message: "Quotation created successfully",
@@ -57,7 +138,22 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
 
     } catch (error: any) {
         console.error('Create quotation error:', error);
-        next(errorHandler(500, "Server error while creating quotation"));
+        
+        // Handle specific error types
+        if (error.name === 'ValidationError') {
+            // Mongoose validation error
+            const errorMessage = error.message || "Validation error while creating quotation";
+            return next(errorHandler(400, errorMessage));
+        }
+        
+        if (error.code === 11000) {
+            // Duplicate key error (e.g., duplicate quotation number)
+            return next(errorHandler(409, "Quotation number already exists. Please try again."));
+        }
+        
+        // Provide more detailed error message
+        const errorMessage = error.message || "Server error while creating quotation";
+        next(errorHandler(500, errorMessage));
     }
 };
 
@@ -214,6 +310,47 @@ export const acceptQuotation = async (req: Request, res: Response, next: NextFun
         quotation.status = 'accepted';
         await quotation.save();
 
+        // Send bidirectional notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Accepted',
+                message: `Client has accepted quotation ${quotation.quotationNumber}. You can now convert it to an invoice.`,
+                actions: [
+                    {
+                        id: 'create_invoice',
+                        label: 'Create Invoice',
+                        type: 'api',
+                        endpoint: `/api/quotation/${quotation._id}/convert-to-invoice`,
+                        method: 'POST',
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_quotation',
+                        label: 'View Quotation',
+                        type: 'navigate',
+                        route: `/quotations/${quotation._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: quotation._id.toString(),
+                    resourceType: 'quotation'
+                },
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({ success: true, message: "Quotation accepted successfully", data: { quotation } });
 
     } catch (error: any) {
@@ -241,6 +378,26 @@ export const rejectQuotation = async (req: Request, res: Response, next: NextFun
             quotation.notes = `Rejection reason: ${reason}`;
         }
         await quotation.save();
+
+        // Send notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Rejected',
+                message: `Client has rejected quotation ${quotation.quotationNumber}. Reason: ${reason || 'No reason provided'}`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    reason: reason
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({ success: true, message: "Quotation rejected", data: { quotation } });
 
@@ -305,6 +462,42 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 
         await invoice.populate('client', 'firstName lastName email company');
 
+        // Send notifications to client and admin
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'Invoice Created from Quotation',
+                message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Admin/Finance confirmation
+            await createInAppNotification({
+                recipient: invoice.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Created',
+                message: `Invoice ${invoice.invoiceNumber} has been created from quotation ${quotation.quotationNumber}.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(201).json({
             success: true,
             message: "Quotation converted to invoice successfully",
@@ -314,6 +507,212 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
     } catch (error: any) {
         console.error('Convert to invoice error:', error);
         next(errorHandler(500, "Server error while converting quotation to invoice"));
+    }
+};
+
+export const generateQuotationPDFController = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { quotationId } = req.params as any;
+
+        const quotation = await Quotation.findById(quotationId)
+            .populate('client', 'firstName lastName email company phone address city country')
+            .populate('project', 'title description projectNumber')
+            .populate('createdBy', 'firstName lastName email');
+
+        if (!quotation) {
+            return next(errorHandler(404, "Quotation not found"));
+        }
+
+        // Generate PDF
+        const pdfBuffer = await generateQuotationPDF(quotation);
+
+        // Upload PDF to Cloudinary as raw file using stream
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct the correct URL for raw files with .pdf extension
+        // Cloudinary returns secure_url for raw files, but we need to ensure .pdf extension is included
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        
+        if (!pdfUrl) {
+            // Fallback: construct URL manually with .pdf extension
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            // Ensure .pdf extension is present in the URL for browser viewing
+            // Cloudinary URLs might not include the extension, so we add it
+            if (!pdfUrl.includes('.pdf')) {
+                // If URL has query params, insert .pdf before the query
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Quotation PDF generated successfully",
+            pdfUrl: pdfUrl
+        });
+
+    } catch (error: any) {
+        console.error('Generate quotation PDF error:', error);
+        next(errorHandler(500, "Server error while generating quotation PDF"));
+    }
+};
+
+export const sendQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { quotationId } = req.params as any;
+
+        const quotation = await Quotation.findById(quotationId)
+            .populate('client', 'firstName lastName email company phone')
+            .populate('project', 'title description projectNumber');
+
+        if (!quotation) {
+            return next(errorHandler(404, "Quotation not found"));
+        }
+
+        // Check if quotation has a client with email
+        if (!quotation.client) {
+            return next(errorHandler(400, "Quotation must have an associated client"));
+        }
+
+        const client = quotation.client as any;
+        if (!client.email) {
+            return next(errorHandler(400, "Client email is required to send quotation"));
+        }
+
+        // Generate PDF
+        const pdfBuffer = await generateQuotationPDF(quotation);
+
+        // Upload PDF to Cloudinary
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        // Send email to client
+        await sendQuotationEmail(client.email, quotation, pdfUrl, pdfBuffer);
+
+        // Update quotation status to 'sent'
+        if (quotation.status === 'pending') {
+            quotation.status = 'sent';
+            await quotation.save();
+        }
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client._id.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'Quotation Sent',
+                message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    pdfUrl: pdfUrl
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Quotation sent successfully",
+            data: {
+                quotationId: quotation._id,
+                sentTo: client.email,
+                pdfUrl: pdfUrl
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Send quotation error:', error);
+        next(errorHandler(500, "Server error while sending quotation"));
     }
 };
 

@@ -203,8 +203,8 @@ export interface IPayment extends Document {
   invoice: Types.ObjectId; // Reference to Invoice
   client: Types.ObjectId; // Reference to Client
   amount: number;
-  paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentMethod: 'mpesa' | 'paystack';
+  status: 'pending' | 'completed' | 'failed';
   transactionId?: string;
   reference?: string;
   paymentDate: Date;
@@ -288,8 +288,32 @@ export interface INotification extends Document {
   sentAt?: Date;
   readAt?: Date;
   metadata?: Record<string, any>;
+  // Bidirectional Notification Support
+  actions?: NotificationAction[];
+  context?: NotificationContext;
+  expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface NotificationAction {
+  id: string;
+  label: string;
+  type: 'api' | 'navigate' | 'modal' | 'confirm';
+  endpoint?: string;
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  payload?: Record<string, any>;
+  route?: string;
+  modal?: string;
+  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+export interface NotificationContext {
+  resourceId: string;
+  resourceType: string;
+  additionalData?: Record<string, any>;
 }
 
 // ===== CONTACT MESSAGE TYPES =====

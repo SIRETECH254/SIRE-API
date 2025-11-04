@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 // @desc    Get user profile
 // @route   GET /api/users/profile
@@ -312,6 +313,27 @@ export const updateUserStatus = async (req: Request, res: Response, next: NextFu
         if (isActive !== undefined) user.isActive = isActive;
 
         await user.save();
+
+        // Send notification to user if account is deactivated
+        if (!user.isActive) {
+            try {
+                await createInAppNotification({
+                    recipient: user._id.toString(),
+                    recipientModel: 'User',
+                    category: 'general',
+                    subject: 'Account Status Changed',
+                    message: `Your admin account has been deactivated. Please contact super admin for assistance.`,
+                    metadata: {
+                        userId: user._id,
+                        isActive: false
+                    },
+                    io: (req.app as any).get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
 
         res.status(200).json({
             success: true,

@@ -6,6 +6,7 @@ import Client from '../models/Client';
 import User from '../models/User';
 import Service from '../models/Service';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 // @desc    Create new project
 // @route   POST /api/projects
@@ -104,6 +105,48 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
                 title: project.title,
                 client: project.client
             });
+        }
+
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'Client',
+                category: 'project',
+                subject: 'New Project Created',
+                message: `A new project "${project.title}" has been created.`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    priority: project.priority
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members (if any)
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'New Project Created',
+                        message: `A new project "${project.title}" has been created and assigned to you.`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            priority: project.priority
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(201).json({
@@ -341,6 +384,42 @@ export const assignTeamMembers = async (req: Request, res: Response, next: NextF
 
         await project.populate('assignedTo', 'firstName lastName email avatar');
 
+        // Send notifications to newly assigned team members
+        try {
+            for (const userId of userIds) {
+                await createInAppNotification({
+                    recipient: userId,
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'Assigned to Project',
+                    message: `You have been assigned to project "${project.title}". Priority: ${project.priority}`,
+                    actions: [
+                        {
+                            id: 'view_project',
+                            label: 'View Project',
+                            type: 'navigate',
+                            route: `/projects/${project._id}`,
+                            variant: 'primary'
+                        }
+                    ],
+                    context: {
+                        resourceId: project._id.toString(),
+                        resourceType: 'project'
+                    },
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        priority: project.priority
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Team members assigned successfully",
@@ -383,6 +462,59 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
                 projectId: project._id,
                 status: project.status
             });
+        }
+
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'Client',
+                category: 'project',
+                subject: 'Project Status Updated',
+                message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                actions: [
+                    {
+                        id: 'view_project',
+                        label: 'View Project',
+                        type: 'navigate',
+                        route: `/projects/${project._id}`,
+                        variant: 'primary'
+                    }
+                ],
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    oldStatus: 'previous',
+                    newStatus: project.status
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Project Status Updated',
+                        message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            oldStatus: 'previous',
+                            newStatus: project.status
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
@@ -428,6 +560,33 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
 
         await project.save();
 
+        // Send notification to client for milestone progress updates (25, 50, 75, 100)
+        try {
+            const isMilestoneProgress = [25, 50, 75, 100].includes(progress);
+            
+            // For Client (only for milestones)
+            if (isMilestoneProgress) {
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'Client',
+                    category: 'project',
+                    subject: 'Project Progress Updated',
+                    message: `Project "${project.title}" progress has been updated to ${progress}%`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        progress: progress,
+                        status: project.status
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Project progress updated successfully",
@@ -472,6 +631,52 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
         } as any);
 
         await project.save();
+
+        // Send notifications for new milestone
+        try {
+            const newMilestone = project.milestones[project.milestones.length - 1];
+            
+            if (newMilestone) {
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'Client',
+                    category: 'project',
+                    subject: 'New Milestone Added',
+                    message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    milestoneTitle: newMilestone.title,
+                    dueDate: newMilestone.dueDate
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'New Milestone Added',
+                        message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            milestoneTitle: newMilestone.title,
+                            dueDate: newMilestone.dueDate
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -523,6 +728,48 @@ export const updateMilestone = async (req: Request, res: Response, next: NextFun
         }
 
         await project.save();
+
+        // Send notifications for milestone status changes
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'Client',
+                category: 'project',
+                subject: 'Milestone Updated',
+                message: `Milestone "${(milestone as any).title}" in project "${project.title}" has been marked as ${(milestone as any).status}`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    milestoneTitle: (milestone as any).title,
+                    status: (milestone as any).status
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Milestone Updated',
+                        message: `Milestone "${(milestone as any).title}" in project "${project.title}" has been marked as ${(milestone as any).status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            milestoneTitle: (milestone as any).title,
+                            status: (milestone as any).status
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -593,6 +840,32 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
         } as any);
 
         await project.save();
+
+        // Send notifications for new attachment
+        try {
+            const newAttachment = project.attachments[project.attachments.length - 1];
+            
+            if (newAttachment && req.user?._id) {
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'Client',
+                    category: 'project',
+                    subject: 'New Project Attachment',
+                    message: `A new file "${newAttachment.name}" has been uploaded to project "${project.title}"`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        fileName: newAttachment.name,
+                        uploadedBy: req.user._id
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,

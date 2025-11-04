@@ -5,7 +5,14 @@ import {
     getNotification,
     markAsRead,
     markAllAsRead,
-    deleteNotification
+    deleteNotification,
+    getUnreadCount,
+    getUnreadNotifications,
+    getNotificationsByCategory,
+    sendInvoiceReminder,
+    sendPaymentConfirmation,
+    sendProjectUpdate,
+    sendBulkNotification
 } from '../controllers/notificationController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -87,12 +94,26 @@ const router = express.Router();
  *       '200':
  *         description: All marked read
  */
+// Notification Management Routes
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), sendNotification);
 router.get('/', authenticateToken, getUserNotifications);
+router.get('/unread-count', authenticateToken, getUnreadCount);
+router.get('/unread', authenticateToken, getUnreadNotifications);
+
+// Notification Actions
 router.get('/:notificationId', authenticateToken, getNotification);
 router.patch('/:notificationId/read', authenticateToken, markAsRead);
-router.patch('/read-all', authenticateToken, markAllAsRead);
 router.delete('/:notificationId', authenticateToken, deleteNotification);
+router.patch('/read-all', authenticateToken, markAllAsRead);
+
+// Specific Notification Types
+router.post('/invoice-reminder', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendInvoiceReminder);
+router.post('/payment-confirmation', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendPaymentConfirmation);
+router.post('/project-update', authenticateToken, authorizeRoles(['super_admin', 'project_manager']), sendProjectUpdate);
+router.post('/bulk', authenticateToken, authorizeRoles(['super_admin']), sendBulkNotification);
+
+// Query Routes
+router.get('/category/:category', authenticateToken, getNotificationsByCategory);
 
 export default router;
 

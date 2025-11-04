@@ -259,8 +259,9 @@ import { errorHandler } from '../middleware/errorHandler';
 import Quotation from '../models/Quotation';
 import Client from '../models/Client';
 import Invoice from '../models/Invoice';
-import { generateQuotationPDF } from '../utils/pdfGenerator';
+import { generateQuotationPDF } from '../utils/generatePDF';
 import { sendQuotationEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -280,7 +281,11 @@ import { sendQuotationEmail } from '../services/external/emailService';
 - Calculate totals automatically
 - Save quotation and link to project
 - Update project's `quotation` field automatically
+- **Send in-app notification to client** (quotation created)
 **Response:** Complete quotation data with populated project
+
+**Notifications:**
+- **Client** receives in-app notification: "New Quotation Created" with quotation number and project details
 
 **Important:** 
 - Project must exist before creating quotation
@@ -337,6 +342,26 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         // Populate references
         await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'New Quotation Created',
+                message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -572,9 +597,14 @@ export const deleteQuotation = async (req: Request, res: Response, next: NextFun
 - Status must be 'sent'
 **Process:**
 - Update status to 'accepted'
-- Emit notification
+- **Send bidirectional in-app notification to admin** (quotation accepted with actions)
 - Prepare for invoice conversion
 **Response:** Updated quotation
+
+**Notifications:**
+- **Admin/Finance** (who created quotation) receives bidirectional notification: "Quotation Accepted" with actions:
+  - **"Create Invoice"** button (API action) - Directly converts quotation to invoice
+  - **"View Quotation"** button (Navigate action) - Opens quotation details page
 
 **Controller Implementation:**
 ```typescript
@@ -601,6 +631,47 @@ export const acceptQuotation = async (req: Request, res: Response, next: NextFun
         quotation.status = 'accepted';
         await quotation.save();
 
+        // Send bidirectional notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Accepted',
+                message: `Client has accepted quotation ${quotation.quotationNumber}. You can now convert it to an invoice.`,
+                actions: [
+                    {
+                        id: 'create_invoice',
+                        label: 'Create Invoice',
+                        type: 'api',
+                        endpoint: `/api/quotation/${quotation._id}/convert-to-invoice`,
+                        method: 'POST',
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_quotation',
+                        label: 'View Quotation',
+                        type: 'navigate',
+                        route: `/quotations/${quotation._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: quotation._id.toString(),
+                    resourceType: 'quotation'
+                },
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Quotation accepted successfully",
@@ -624,8 +695,11 @@ export const acceptQuotation = async (req: Request, res: Response, next: NextFun
 **Process:**
 - Update status to 'rejected'
 - Optional: collect rejection reason
-- Notify admin team
+- **Send in-app notification to admin** (quotation rejected with reason)
 **Response:** Updated quotation
+
+**Notifications:**
+- **Admin/Finance** (who created quotation) receives notification: "Quotation Rejected" with rejection reason (if provided)
 
 **Controller Implementation:**
 ```typescript
@@ -649,6 +723,26 @@ export const rejectQuotation = async (req: Request, res: Response, next: NextFun
             quotation.notes = `Rejection reason: ${reason}`;
         }
         await quotation.save();
+
+        // Send notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Rejected',
+                message: `Client has rejected quotation ${quotation.quotationNumber}. Reason: ${reason || 'No reason provided'}`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    reason: reason
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -675,8 +769,12 @@ export const rejectQuotation = async (req: Request, res: Response, next: NextFun
 - Create invoice from quotation data
 - Update quotation status to 'converted'
 - Link invoice to quotation
-- Emit notification
+- **Send in-app notifications to client and admin** (invoice created)
 **Response:** Created invoice data
+
+**Notifications:**
+- **Client** receives in-app notification: "Invoice Created from Quotation" with quotation and invoice numbers
+- **Admin/Finance** receives in-app notification: "Invoice Created" confirming invoice creation from quotation
 
 **Controller Implementation:**
 ```typescript
@@ -738,6 +836,42 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 
         await invoice.populate('client', 'firstName lastName email company');
 
+        // Send notifications to client and admin
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'Invoice Created from Quotation',
+                message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: req.app.get('io')
+            });
+
+            // For Admin/Finance confirmation
+            await createInAppNotification({
+                recipient: invoice.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Created',
+                message: `Invoice ${invoice.invoiceNumber} has been created from quotation ${quotation.quotationNumber}.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(201).json({
             success: true,
             message: "Quotation converted to invoice successfully",
@@ -754,7 +888,7 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 };
 ```
 
-#### `generateQuotationPDF(quotationId)`
+#### `generateQuotationPDFController(quotationId)`
 **Purpose:** Generate PDF of quotation
 **Access:** Admin or client (own quotations)
 **Process:**
@@ -765,23 +899,78 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 
 **Controller Implementation:**
 ```typescript
-export const generateQuotationPDF = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const generateQuotationPDFController = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email company phone address city country');
+            .populate('client', 'firstName lastName email company phone address city country')
+            .populate('project', 'title description projectNumber')
+            .populate('createdBy', 'firstName lastName email');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
         }
 
-        // Generate PDF (implement this function in utils/pdfGenerator.ts)
+        // Generate PDF
         const pdfBuffer = await generateQuotationPDF(quotation);
 
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=quotation-${quotation.quotationNumber}.pdf`);
-        res.send(pdfBuffer);
+        // Upload PDF to Cloudinary as raw file
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Quotation PDF generated successfully",
+            pdfUrl: pdfUrl
+        });
 
     } catch (error: any) {
         console.error('Generate quotation PDF error:', error);
@@ -797,8 +986,12 @@ export const generateQuotationPDF = async (req: Request, res: Response, next: Ne
 - Generate PDF
 - Send email with PDF attachment
 - Update status to 'sent'
+- **Send in-app notification to client** (quotation sent)
 - Track send date
 **Response:** Confirmation message
+
+**Notifications:**
+- **Client** receives in-app notification: "Quotation Sent" with quotation number and PDF URL
 
 **Controller Implementation:**
 ```typescript
@@ -807,25 +1000,114 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email');
+            .populate('client', 'firstName lastName email company phone')
+            .populate('project', 'title description projectNumber');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
         }
 
+        // Check if quotation has a client with email
+        if (!quotation.client) {
+            return next(errorHandler(400, "Quotation must have an associated client"));
+        }
+
+        const client = quotation.client as any;
+        if (!client.email) {
+            return next(errorHandler(400, "Client email is required to send quotation"));
+        }
+
         // Generate PDF
         const pdfBuffer = await generateQuotationPDF(quotation);
 
-        // Send email with PDF attachment
-        await sendQuotationEmail(quotation.client.email, quotation, pdfBuffer);
+        // Upload PDF to Cloudinary
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        // Send email to client with PDF URL and attachment
+        await sendQuotationEmail(client.email, quotation, pdfUrl, pdfBuffer);
 
         // Update status to sent
-        quotation.status = 'sent';
-        await quotation.save();
+        if (quotation.status === 'pending') {
+            quotation.status = 'sent';
+            await quotation.save();
+        }
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client._id.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'Quotation Sent',
+                message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    pdfUrl: pdfUrl
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
-            message: "Quotation sent successfully"
+            message: "Quotation sent successfully",
+            data: {
+                quotationId: quotation._id,
+                sentTo: client.email,
+                pdfUrl: pdfUrl
+            }
         });
 
     } catch (error: any) {
@@ -835,87 +1117,6 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
 };
 ```
 
-#### `getClientQuotations(clientId)`
-**Purpose:** Get all quotations for a client
-**Access:** Admin or client themselves
-**Response:** List of client's quotations
-
-**Controller Implementation:**
-```typescript
-export const getClientQuotations = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { clientId } = req.params;
-
-        const quotations = await Quotation.find({ client: clientId })
-            .populate('createdBy', 'firstName lastName email')
-            .sort({ createdAt: 'desc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                quotations: quotations
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get client quotations error:', error);
-        next(errorHandler(500, "Server error while fetching client quotations"));
-    }
-};
-```
-
-#### `getQuotationStats()`
-**Purpose:** Get quotation statistics
-**Access:** Admin users
-**Response:**
-- Total quotations by status
-- Acceptance rate
-- Average quotation value
-- Conversion rate to invoices
-
-**Controller Implementation:**
-```typescript
-export const getQuotationStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const total = await Quotation.countDocuments();
-        const pending = await Quotation.countDocuments({ status: 'pending' });
-        const sent = await Quotation.countDocuments({ status: 'sent' });
-        const accepted = await Quotation.countDocuments({ status: 'accepted' });
-        const rejected = await Quotation.countDocuments({ status: 'rejected' });
-        const converted = await Quotation.countDocuments({ status: 'converted' });
-
-        const acceptanceRate = (sent + accepted + converted) > 0 
-            ? ((accepted + converted) / (sent + accepted + rejected + converted) * 100).toFixed(2) 
-            : 0;
-
-        const conversionRate = accepted > 0 
-            ? ((converted / accepted) * 100).toFixed(2) 
-            : 0;
-
-        res.status(200).json({
-            success: true,
-            data: {
-                stats: {
-                    total,
-                    byStatus: {
-                        pending,
-                        sent,
-                        accepted,
-                        rejected,
-                        converted
-                    },
-                    acceptanceRate,
-                    conversionRate
-                }
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get quotation stats error:', error);
-        next(errorHandler(500, "Server error while fetching quotation statistics"));
-    }
-};
-```
 
 ---
 
@@ -925,28 +1126,20 @@ export const getQuotationStats = async (req: Request, res: Response, next: NextF
 
 ```typescript
 // Admin Routes
-POST   /                          // Create quotation
-GET    /                          // Get all quotations (paginated, filtered)
-GET    /stats                     // Get quotation statistics
+POST   /                          // Create quotation (admin)
+GET    /                          // Get all quotations (admin)
+
+// Client Action Routes (must come before :quotationId)
+POST   /:quotationId/accept       // Accept quotation (client)
+POST   /:quotationId/reject       // Reject quotation (client)
+POST   /:quotationId/convert-to-invoice  // Convert to invoice (admin)
+POST   /:quotationId/send         // Send quotation via email (admin)
+GET    /:quotationId/pdf          // Generate PDF
 
 // Quotation Management Routes
 GET    /:quotationId              // Get single quotation
-PUT    /:quotationId              // Update quotation
+PUT    /:quotationId              // Update quotation (admin)
 DELETE /:quotationId              // Delete quotation (super admin)
-
-// Client Action Routes
-POST   /:quotationId/accept       // Accept quotation (client)
-POST   /:quotationId/reject       // Reject quotation (client)
-
-// Conversion Routes
-POST   /:quotationId/convert-to-invoice  // Convert to invoice
-
-// Document Routes
-GET    /:quotationId/pdf          // Generate PDF
-POST   /:quotationId/send         // Send quotation via email
-
-// Query Routes
-GET    /client/:clientId          // Get client quotations
 ```
 
 ### Router Implementation
@@ -958,16 +1151,14 @@ import express from 'express';
 import {
     createQuotation,
     getAllQuotations,
-    getQuotationStats,
     getQuotation,
     updateQuotation,
     deleteQuotation,
     acceptQuotation,
     rejectQuotation,
     convertToInvoice,
-    generateQuotationPDF,
-    sendQuotation,
-    getClientQuotations
+    generateQuotationPDFController,
+    sendQuotation
 } from '../controllers/quotationController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -975,87 +1166,29 @@ const router = express.Router();
 
 /**
  * @route   POST /api/quotations
- * @desc    Create new quotation
+ * @desc    Create quotation (admin)
  * @access  Private (Admin, Finance)
  */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createQuotation);
 
 /**
  * @route   GET /api/quotations
- * @desc    Get all quotations with filtering and pagination
+ * @desc    Get all quotations (admin)
  * @access  Private (Admin)
  */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllQuotations);
 
-/**
- * @route   GET /api/quotations/stats
- * @desc    Get quotation statistics
- * @access  Private (Admin)
- */
-router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance']), getQuotationStats);
-
-/**
- * @route   GET /api/quotations/client/:clientId
- * @desc    Get client quotations
- * @access  Private (Client or Admin)
- */
-router.get('/client/:clientId', authenticateToken, getClientQuotations);
-
-/**
- * @route   GET /api/quotations/:quotationId
- * @desc    Get single quotation
- * @access  Private (Admin or Client)
- */
-router.get('/:quotationId', authenticateToken, getQuotation);
-
-/**
- * @route   PUT /api/quotations/:quotationId
- * @desc    Update quotation
- * @access  Private (Admin)
- */
-router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
-
-/**
- * @route   DELETE /api/quotations/:quotationId
- * @desc    Delete quotation
- * @access  Private (Super Admin only)
- */
-router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/accept
- * @desc    Accept quotation
- * @access  Private (Client)
- */
+// Specific sub-routes must come before dynamic :quotationId route
 router.post('/:quotationId/accept', authenticateToken, acceptQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/reject
- * @desc    Reject quotation
- * @access  Private (Client)
- */
 router.post('/:quotationId/reject', authenticateToken, rejectQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/convert-to-invoice
- * @desc    Convert quotation to invoice
- * @access  Private (Admin, Finance)
- */
 router.post('/:quotationId/convert-to-invoice', authenticateToken, authorizeRoles(['super_admin', 'finance']), convertToInvoice);
-
-/**
- * @route   GET /api/quotations/:quotationId/pdf
- * @desc    Generate quotation PDF
- * @access  Private (Admin or Client)
- */
-router.get('/:quotationId/pdf', authenticateToken, generateQuotationPDF);
-
-/**
- * @route   POST /api/quotations/:quotationId/send
- * @desc    Send quotation via email
- * @access  Private (Admin)
- */
 router.post('/:quotationId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendQuotation);
+router.get('/:quotationId/pdf', authenticateToken, generateQuotationPDFController);
+
+// Dynamic routes come last
+router.get('/:quotationId', authenticateToken, getQuotation);
+router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
+router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
 
 export default router;
 ```
@@ -1413,9 +1546,14 @@ export default router;
 
 **URL Parameter:** `quotationId` - The quotation ID
 
-**Response:** PDF file (binary)
-- Content-Type: `application/pdf`
-- Content-Disposition: `attachment; filename=quotation-QT-2025-0001.pdf`
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Quotation PDF generated successfully",
+  "pdfUrl": "https://res.cloudinary.com/your-cloud/raw/upload/v1234567890/sire-tech/quotations/quotation-QT-2025-0001.pdf"
+}
+```
 
 #### `POST /api/quotations/:quotationId/send`
 **Headers:** `Authorization: Bearer <admin_token>`
@@ -1565,9 +1703,54 @@ curl -X POST http://localhost:5000/api/quotations/<quotationId>/send \
 - **Line items transfer** - All line items transferred from quotation to invoice
 
 ### Notification Integration
-- Email quotation delivery
-- Status change notifications
-- Acceptance/rejection alerts
+
+The Quotation system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Quotation Created** (`createQuotation`)
+   - **Recipient:** Client
+   - **Category:** `quotation`
+   - **Subject:** "New Quotation Created"
+   - **Message:** Includes quotation number and project details
+   - **Metadata:** `quotationId`, `quotationNumber`, `projectId`
+
+2. **Quotation Sent** (`sendQuotation`)
+   - **Recipient:** Client
+   - **Category:** `quotation`
+   - **Subject:** "Quotation Sent"
+   - **Message:** Includes quotation number and PDF URL
+   - **Metadata:** `quotationId`, `quotationNumber`, `pdfUrl`
+
+3. **Quotation Accepted** (`acceptQuotation`)
+   - **Recipient:** Admin/Finance (who created quotation)
+   - **Category:** `quotation`
+   - **Subject:** "Quotation Accepted"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Create Invoice"** button (API action) - Directly converts quotation to invoice
+     - **"View Quotation"** button (Navigate action) - Opens quotation details
+   - **Metadata:** `quotationId`, `quotationNumber`, `projectId`
+
+4. **Quotation Rejected** (`rejectQuotation`)
+   - **Recipient:** Admin/Finance (who created quotation)
+   - **Category:** `quotation`
+   - **Subject:** "Quotation Rejected"
+   - **Message:** Includes rejection reason (if provided)
+   - **Metadata:** `quotationId`, `quotationNumber`, `reason`
+
+5. **Quotation Converted to Invoice** (`convertToInvoice`)
+   - **Recipients:** Client and Admin/Finance
+   - **Category:** `invoice` (for client), `invoice` (for admin)
+   - **Subject:** "Invoice Created from Quotation" (client) / "Invoice Created" (admin)
+   - **Message:** Includes quotation and invoice numbers
+   - **Metadata:** `quotationId`, `invoiceId`, `invoiceNumber`
+
+#### Notification Preferences
+
+All notifications respect user/client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
 
 ---
 
