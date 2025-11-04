@@ -319,8 +319,8 @@ export const updateTestimonial = async (req: Request, res: Response, next: NextF
         if (isOwner && testimonial.isApproved) {
             testimonial.isApproved = false;
             testimonial.isPublished = false;
-            testimonial.approvedBy = undefined;
-            testimonial.approvedAt = undefined;
+            testimonial.approvedBy = undefined as any;
+            testimonial.approvedAt = undefined as any;
         }
 
         await testimonial.save();
