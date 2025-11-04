@@ -1038,12 +1038,7 @@ export const getClientPayments = async (req: Request, res: Response, next: NextF
             .populate('invoice', 'invoiceNumber projectTitle totalAmount')
             .sort({ createdAt: 'desc' });
 
-        res.status(200).json({
-            success: true,
-            data: {
-                payments: payments
-            }
-        });
+        res.status(200).json({ success: true, data: { payments } });
 
     } catch (error: any) {
         console.error('Get client payments error:', error);
@@ -1066,12 +1061,7 @@ export const getInvoicePayments = async (req: Request, res: Response, next: Next
         const payments = await Payment.find({ invoice: invoiceId })
             .sort({ createdAt: 'desc' });
 
-        res.status(200).json({
-            success: true,
-            data: {
-                payments: payments
-            }
-        });
+        res.status(200).json({ success: true, data: { payments } });
 
     } catch (error: any) {
         console.error('Get invoice payments error:', error);
@@ -1090,24 +1080,26 @@ export const getInvoicePayments = async (req: Request, res: Response, next: Next
 ```typescript
 // Payment Management Routes
 POST   /                          // Admin initiate payment for client
-GET    /                          // Get all payments (paginated, filtered)
-GET    /:paymentId                // Get single payment
-PUT    /:paymentId                // Update payment
-DELETE /:paymentId                // Delete payment (super admin only)
+GET    /                          // Get all payments (admin)
+
+// Query Routes (must come before :paymentId)
+GET    /client/:clientId          // Get client payments
+GET    /invoice/:invoiceId        // Get invoice payments
 
 // Payment Initiation Routes
 POST   /initiate                  // Client/Admin initiate payment
 
-// M-Pesa Routes
+// Webhook Routes (public - no authentication)
 POST   /webhooks/mpesa            // M-Pesa webhook
-GET    /mpesa-status/:checkoutRequestId  // Query M-Pesa status by checkout ID
-
-// Paystack Routes
 POST   /webhooks/paystack         // Paystack webhook
 
-// Query Routes
-GET    /client/:clientId          // Get client payments
-GET    /invoice/:invoiceId        // Get invoice payments
+// M-Pesa Status Query Routes
+GET    /mpesa-status/:checkoutRequestId  // Query M-Pesa status by checkout ID
+
+// Payment Management Routes
+GET    /:paymentId                // Get single payment
+PUT    /:paymentId                // Update payment (admin)
+DELETE /:paymentId                // Delete payment (super admin only)
 ```
 
 ### Router Implementation
@@ -1133,81 +1125,23 @@ import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
-/**
- * @route   POST /api/payments
- * @desc    Admin initiate payment for client
- * @access  Private (Admin, Finance)
- */
+// Basic payment routes
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createPaymentAdmin);
-
-/**
- * @route   GET /api/payments
- * @desc    Get all payments with filtering and pagination
- * @access  Private (Admin)
- */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), getAllPayments);
-
-/**
- * @route   GET /api/payments/client/:clientId
- * @desc    Get client payments
- * @access  Private (Client or Admin)
- */
 router.get('/client/:clientId', authenticateToken, getClientPayments);
-
-/**
- * @route   GET /api/payments/invoice/:invoiceId
- * @desc    Get invoice payments
- * @access  Private (Admin or Client)
- */
 router.get('/invoice/:invoiceId', authenticateToken, getInvoicePayments);
-
-/**
- * @route   GET /api/payments/:paymentId
- * @desc    Get single payment
- * @access  Private (Admin or Client)
- */
 router.get('/:paymentId', authenticateToken, getPayment);
-
-/**
- * @route   PUT /api/payments/:paymentId
- * @desc    Update payment
- * @access  Private (Admin)
- */
 router.put('/:paymentId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updatePayment);
-
-/**
- * @route   DELETE /api/payments/:paymentId
- * @desc    Delete payment
- * @access  Private (Super Admin only)
- */
 router.delete('/:paymentId', authenticateToken, authorizeRoles(['super_admin']), deletePayment);
 
-/**
- * @route   POST /api/payments/initiate
- * @desc    Initiate payment (M-Pesa or Paystack)
- * @access  Private (Authenticated users)
- */
+// Payment gateway routes
 router.post('/initiate', authenticateToken, initiatePayment);
 
-/**
- * @route   POST /api/payments/webhooks/mpesa
- * @desc    M-Pesa webhook
- * @access  Public (M-Pesa gateway)
- */
+// Webhook routes (public - no authentication required)
 router.post('/webhooks/mpesa', mpesaWebhook);
-
-/**
- * @route   POST /api/payments/webhooks/paystack
- * @desc    Paystack webhook
- * @access  Public (Paystack gateway)
- */
 router.post('/webhooks/paystack', paystackWebhook);
 
-/**
- * @route   GET /api/payments/mpesa-status/:checkoutRequestId
- * @desc    Query M-Pesa status by checkout ID
- * @access  Private (Authenticated users)
- */
+// M-Pesa status query routes
 router.get('/mpesa-status/:checkoutRequestId', authenticateToken, queryMpesaByCheckoutId);
 
 export default router;

@@ -888,7 +888,7 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 };
 ```
 
-#### `generateQuotationPDF(quotationId)`
+#### `generateQuotationPDFController(quotationId)`
 **Purpose:** Generate PDF of quotation
 **Access:** Admin or client (own quotations)
 **Process:**
@@ -899,23 +899,78 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 
 **Controller Implementation:**
 ```typescript
-export const generateQuotationPDF = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const generateQuotationPDFController = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email company phone address city country');
+            .populate('client', 'firstName lastName email company phone address city country')
+            .populate('project', 'title description projectNumber')
+            .populate('createdBy', 'firstName lastName email');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
         }
 
-        // Generate PDF (implement this function in utils/pdfGenerator.ts)
+        // Generate PDF
         const pdfBuffer = await generateQuotationPDF(quotation);
 
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=quotation-${quotation.quotationNumber}.pdf`);
-        res.send(pdfBuffer);
+        // Upload PDF to Cloudinary as raw file
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Quotation PDF generated successfully",
+            pdfUrl: pdfUrl
+        });
 
     } catch (error: any) {
         console.error('Generate quotation PDF error:', error);
@@ -945,17 +1000,79 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         const { quotationId } = req.params;
 
         const quotation = await Quotation.findById(quotationId)
-            .populate('client', 'firstName lastName email');
+            .populate('client', 'firstName lastName email company phone')
+            .populate('project', 'title description projectNumber');
 
         if (!quotation) {
             return next(errorHandler(404, "Quotation not found"));
         }
 
+        // Check if quotation has a client with email
+        if (!quotation.client) {
+            return next(errorHandler(400, "Quotation must have an associated client"));
+        }
+
+        const client = quotation.client as any;
+        if (!client.email) {
+            return next(errorHandler(400, "Client email is required to send quotation"));
+        }
+
         // Generate PDF
         const pdfBuffer = await generateQuotationPDF(quotation);
 
-        // Send email with PDF attachment
-        await sendQuotationEmail(quotation.client.email, quotation, pdfBuffer);
+        // Upload PDF to Cloudinary
+        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
+        
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/quotations',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public',
+                    use_filename: true,
+                    unique_filename: false
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || ''
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        // Construct PDF URL with .pdf extension
+        let pdfUrl = uploadResult.secure_url || uploadResult.url;
+        if (!pdfUrl) {
+            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
+                ? uploadResult.public_id 
+                : `sire-tech/quotations/${uploadResult.public_id}`;
+            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        } else {
+            if (!pdfUrl.includes('.pdf')) {
+                if (pdfUrl.includes('?')) {
+                    pdfUrl = pdfUrl.replace('?', '.pdf?');
+                } else {
+                    pdfUrl += '.pdf';
+                }
+            }
+        }
+
+        // Send email to client with PDF URL and attachment
+        await sendQuotationEmail(client.email, quotation, pdfUrl, pdfBuffer);
 
         // Update status to sent
         if (quotation.status === 'pending') {
@@ -1000,87 +1117,6 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
 };
 ```
 
-#### `getClientQuotations(clientId)`
-**Purpose:** Get all quotations for a client
-**Access:** Admin or client themselves
-**Response:** List of client's quotations
-
-**Controller Implementation:**
-```typescript
-export const getClientQuotations = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { clientId } = req.params;
-
-        const quotations = await Quotation.find({ client: clientId })
-            .populate('createdBy', 'firstName lastName email')
-            .sort({ createdAt: 'desc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                quotations: quotations
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get client quotations error:', error);
-        next(errorHandler(500, "Server error while fetching client quotations"));
-    }
-};
-```
-
-#### `getQuotationStats()`
-**Purpose:** Get quotation statistics
-**Access:** Admin users
-**Response:**
-- Total quotations by status
-- Acceptance rate
-- Average quotation value
-- Conversion rate to invoices
-
-**Controller Implementation:**
-```typescript
-export const getQuotationStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const total = await Quotation.countDocuments();
-        const pending = await Quotation.countDocuments({ status: 'pending' });
-        const sent = await Quotation.countDocuments({ status: 'sent' });
-        const accepted = await Quotation.countDocuments({ status: 'accepted' });
-        const rejected = await Quotation.countDocuments({ status: 'rejected' });
-        const converted = await Quotation.countDocuments({ status: 'converted' });
-
-        const acceptanceRate = (sent + accepted + converted) > 0 
-            ? ((accepted + converted) / (sent + accepted + rejected + converted) * 100).toFixed(2) 
-            : 0;
-
-        const conversionRate = accepted > 0 
-            ? ((converted / accepted) * 100).toFixed(2) 
-            : 0;
-
-        res.status(200).json({
-            success: true,
-            data: {
-                stats: {
-                    total,
-                    byStatus: {
-                        pending,
-                        sent,
-                        accepted,
-                        rejected,
-                        converted
-                    },
-                    acceptanceRate,
-                    conversionRate
-                }
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get quotation stats error:', error);
-        next(errorHandler(500, "Server error while fetching quotation statistics"));
-    }
-};
-```
 
 ---
 
@@ -1090,28 +1126,20 @@ export const getQuotationStats = async (req: Request, res: Response, next: NextF
 
 ```typescript
 // Admin Routes
-POST   /                          // Create quotation
-GET    /                          // Get all quotations (paginated, filtered)
-GET    /stats                     // Get quotation statistics
+POST   /                          // Create quotation (admin)
+GET    /                          // Get all quotations (admin)
+
+// Client Action Routes (must come before :quotationId)
+POST   /:quotationId/accept       // Accept quotation (client)
+POST   /:quotationId/reject       // Reject quotation (client)
+POST   /:quotationId/convert-to-invoice  // Convert to invoice (admin)
+POST   /:quotationId/send         // Send quotation via email (admin)
+GET    /:quotationId/pdf          // Generate PDF
 
 // Quotation Management Routes
 GET    /:quotationId              // Get single quotation
-PUT    /:quotationId              // Update quotation
+PUT    /:quotationId              // Update quotation (admin)
 DELETE /:quotationId              // Delete quotation (super admin)
-
-// Client Action Routes
-POST   /:quotationId/accept       // Accept quotation (client)
-POST   /:quotationId/reject       // Reject quotation (client)
-
-// Conversion Routes
-POST   /:quotationId/convert-to-invoice  // Convert to invoice
-
-// Document Routes
-GET    /:quotationId/pdf          // Generate PDF
-POST   /:quotationId/send         // Send quotation via email
-
-// Query Routes
-GET    /client/:clientId          // Get client quotations
 ```
 
 ### Router Implementation
@@ -1123,16 +1151,14 @@ import express from 'express';
 import {
     createQuotation,
     getAllQuotations,
-    getQuotationStats,
     getQuotation,
     updateQuotation,
     deleteQuotation,
     acceptQuotation,
     rejectQuotation,
     convertToInvoice,
-    generateQuotationPDF,
-    sendQuotation,
-    getClientQuotations
+    generateQuotationPDFController,
+    sendQuotation
 } from '../controllers/quotationController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -1140,87 +1166,29 @@ const router = express.Router();
 
 /**
  * @route   POST /api/quotations
- * @desc    Create new quotation
+ * @desc    Create quotation (admin)
  * @access  Private (Admin, Finance)
  */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createQuotation);
 
 /**
  * @route   GET /api/quotations
- * @desc    Get all quotations with filtering and pagination
+ * @desc    Get all quotations (admin)
  * @access  Private (Admin)
  */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllQuotations);
 
-/**
- * @route   GET /api/quotations/stats
- * @desc    Get quotation statistics
- * @access  Private (Admin)
- */
-router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance']), getQuotationStats);
-
-/**
- * @route   GET /api/quotations/client/:clientId
- * @desc    Get client quotations
- * @access  Private (Client or Admin)
- */
-router.get('/client/:clientId', authenticateToken, getClientQuotations);
-
-/**
- * @route   GET /api/quotations/:quotationId
- * @desc    Get single quotation
- * @access  Private (Admin or Client)
- */
-router.get('/:quotationId', authenticateToken, getQuotation);
-
-/**
- * @route   PUT /api/quotations/:quotationId
- * @desc    Update quotation
- * @access  Private (Admin)
- */
-router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
-
-/**
- * @route   DELETE /api/quotations/:quotationId
- * @desc    Delete quotation
- * @access  Private (Super Admin only)
- */
-router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/accept
- * @desc    Accept quotation
- * @access  Private (Client)
- */
+// Specific sub-routes must come before dynamic :quotationId route
 router.post('/:quotationId/accept', authenticateToken, acceptQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/reject
- * @desc    Reject quotation
- * @access  Private (Client)
- */
 router.post('/:quotationId/reject', authenticateToken, rejectQuotation);
-
-/**
- * @route   POST /api/quotations/:quotationId/convert-to-invoice
- * @desc    Convert quotation to invoice
- * @access  Private (Admin, Finance)
- */
 router.post('/:quotationId/convert-to-invoice', authenticateToken, authorizeRoles(['super_admin', 'finance']), convertToInvoice);
-
-/**
- * @route   GET /api/quotations/:quotationId/pdf
- * @desc    Generate quotation PDF
- * @access  Private (Admin or Client)
- */
-router.get('/:quotationId/pdf', authenticateToken, generateQuotationPDF);
-
-/**
- * @route   POST /api/quotations/:quotationId/send
- * @desc    Send quotation via email
- * @access  Private (Admin)
- */
 router.post('/:quotationId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendQuotation);
+router.get('/:quotationId/pdf', authenticateToken, generateQuotationPDFController);
+
+// Dynamic routes come last
+router.get('/:quotationId', authenticateToken, getQuotation);
+router.put('/:quotationId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateQuotation);
+router.delete('/:quotationId', authenticateToken, authorizeRoles(['super_admin']), deleteQuotation);
 
 export default router;
 ```

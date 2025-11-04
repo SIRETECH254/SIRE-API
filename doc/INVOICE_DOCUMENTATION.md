@@ -918,7 +918,7 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
 };
 ```
 
-#### `generateInvoicePDF(invoiceId)`
+#### `generateInvoicePDFController(invoiceId)`
 **Purpose:** Generate PDF of invoice and upload to Cloudinary
 **Access:** Admin or client (own invoices)
 **Process:**
@@ -1178,133 +1178,6 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
 };
 ```
 
-#### `getClientInvoices(clientId)`
-**Purpose:** Get all invoices for a client
-**Access:** Admin or client themselves
-**Response:** List of client's invoices
-
-**Controller Implementation:**
-```typescript
-export const getClientInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { clientId } = req.params;
-
-        const invoices = await Invoice.find({ client: clientId })
-            .populate('quotation', 'quotationNumber')
-            .populate('createdBy', 'firstName lastName email')
-            .sort({ createdAt: 'desc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                invoices: invoices
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get client invoices error:', error);
-        next(errorHandler(500, "Server error while fetching client invoices"));
-    }
-};
-```
-
-#### `getOverdueInvoices()`
-**Purpose:** Get all overdue invoices
-**Access:** Admin users
-**Response:** List of overdue invoices
-
-**Controller Implementation:**
-```typescript
-export const getOverdueInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const overdueInvoices = await Invoice.find({
-            status: 'overdue'
-        })
-            .populate('client', 'firstName lastName email company')
-            .sort({ dueDate: 'asc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                invoices: overdueInvoices,
-                count: overdueInvoices.length
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get overdue invoices error:', error);
-        next(errorHandler(500, "Server error while fetching overdue invoices"));
-    }
-};
-```
-
-#### `getInvoiceStats()`
-**Purpose:** Get invoice statistics
-**Access:** Admin users
-**Response:**
-- Total invoices by status
-- Total revenue (paid + partially paid)
-- Outstanding balance
-- Overdue count and amount
-- Average invoice value
-- Payment collection rate
-
-**Controller Implementation:**
-```typescript
-export const getInvoiceStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const total = await Invoice.countDocuments();
-        const draft = await Invoice.countDocuments({ status: 'draft' });
-        const sent = await Invoice.countDocuments({ status: 'sent' });
-        const paid = await Invoice.countDocuments({ status: 'paid' });
-        const partiallyPaid = await Invoice.countDocuments({ status: 'partially_paid' });
-        const overdue = await Invoice.countDocuments({ status: 'overdue' });
-        const cancelled = await Invoice.countDocuments({ status: 'cancelled' });
-
-        // Calculate revenue
-        const paidInvoices = await Invoice.find({ status: 'paid' });
-        const partialInvoices = await Invoice.find({ status: 'partially_paid' });
-        
-        const totalRevenue = paidInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-        const partialRevenue = partialInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-        const totalCollected = totalRevenue + partialRevenue;
-
-        // Outstanding balance
-        const allInvoices = await Invoice.find({
-            status: { $in: ['sent', 'partially_paid', 'overdue'] }
-        });
-        const outstanding = allInvoices.reduce((sum, inv) => sum + (inv.totalAmount - inv.paidAmount), 0);
-
-        res.status(200).json({
-            success: true,
-            data: {
-                stats: {
-                    total,
-                    byStatus: {
-                        draft,
-                        sent,
-                        paid,
-                        partiallyPaid,
-                        overdue,
-                        cancelled
-                    },
-                    revenue: {
-                        totalCollected,
-                        outstanding,
-                        paidInFull: totalRevenue,
-                        partialPayments: partialRevenue
-                    },
-                    paymentCollectionRate: total > 0 ? ((paid / total) * 100).toFixed(2) : 0
-                }
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get invoice stats error:', error);
-        next(errorHandler(500, "Server error while fetching invoice statistics"));
-    }
-};
-```
 
 ---
 
@@ -1314,27 +1187,18 @@ export const getInvoiceStats = async (req: Request, res: Response, next: NextFun
 
 ```typescript
 // Admin Routes
-POST   /                          // Create invoice
-GET    /                          // Get all invoices (paginated, filtered)
-GET    /stats                     // Get invoice statistics
+POST   /                          // Create invoice (admin)
+GET    /                          // Get all invoices (admin)
 
 // Invoice Management Routes
 GET    /:invoiceId                // Get single invoice
-PUT    /:invoiceId                // Update invoice
+PUT    /:invoiceId                // Update invoice (admin)
 DELETE /:invoiceId                // Delete invoice (super admin)
-
-// Payment Action Routes
-PATCH  /:invoiceId/mark-paid      // Mark as paid
-PATCH  /:invoiceId/mark-overdue   // Mark as overdue
-PATCH  /:invoiceId/cancel         // Cancel invoice
-
-// Document Routes
+PATCH  /:invoiceId/mark-paid      // Mark as paid (admin)
+PATCH  /:invoiceId/mark-overdue   // Mark as overdue (admin)
+PATCH  /:invoiceId/cancel         // Cancel invoice (admin)
 GET    /:invoiceId/pdf            // Generate PDF
-POST   /:invoiceId/send           // Send invoice via email
-
-// Query Routes
-GET    /client/:clientId          // Get client invoices
-GET    /overdue                   // Get overdue invoices
+POST   /:invoiceId/send           // Send invoice via email (admin)
 ```
 
 ### Router Implementation
@@ -1346,111 +1210,28 @@ import express from 'express';
 import {
     createInvoice,
     getAllInvoices,
-    getInvoiceStats,
     getInvoice,
     updateInvoice,
     deleteInvoice,
     markAsPaid,
     markAsOverdue,
     cancelInvoice,
-    generateInvoicePDF,
-    sendInvoice,
-    getClientInvoices,
-    getOverdueInvoices
+    generateInvoicePDFController,
+    sendInvoice
 } from '../controllers/invoiceController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
-/**
- * @route   POST /api/invoices
- * @desc    Create new invoice
- * @access  Private (Admin, Finance)
- */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createInvoice);
-
-/**
- * @route   GET /api/invoices
- * @desc    Get all invoices with filtering and pagination
- * @access  Private (Admin)
- */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllInvoices);
-
-/**
- * @route   GET /api/invoices/stats
- * @desc    Get invoice statistics
- * @access  Private (Admin)
- */
-router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance']), getInvoiceStats);
-
-/**
- * @route   GET /api/invoices/overdue
- * @desc    Get overdue invoices
- * @access  Private (Admin)
- */
-router.get('/overdue', authenticateToken, authorizeRoles(['super_admin', 'finance']), getOverdueInvoices);
-
-/**
- * @route   GET /api/invoices/client/:clientId
- * @desc    Get client invoices
- * @access  Private (Client or Admin)
- */
-router.get('/client/:clientId', authenticateToken, getClientInvoices);
-
-/**
- * @route   GET /api/invoices/:invoiceId
- * @desc    Get single invoice
- * @access  Private (Admin or Client)
- */
 router.get('/:invoiceId', authenticateToken, getInvoice);
-
-/**
- * @route   PUT /api/invoices/:invoiceId
- * @desc    Update invoice
- * @access  Private (Admin)
- */
 router.put('/:invoiceId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateInvoice);
-
-/**
- * @route   DELETE /api/invoices/:invoiceId
- * @desc    Delete invoice
- * @access  Private (Super Admin only)
- */
 router.delete('/:invoiceId', authenticateToken, authorizeRoles(['super_admin']), deleteInvoice);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/mark-paid
- * @desc    Mark invoice as paid
- * @access  Private (Admin, Finance)
- */
 router.patch('/:invoiceId/mark-paid', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsPaid);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/mark-overdue
- * @desc    Mark invoice as overdue
- * @access  Private (Admin, Finance)
- */
 router.patch('/:invoiceId/mark-overdue', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsOverdue);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/cancel
- * @desc    Cancel invoice
- * @access  Private (Admin)
- */
 router.patch('/:invoiceId/cancel', authenticateToken, authorizeRoles(['super_admin', 'finance']), cancelInvoice);
-
-/**
- * @route   GET /api/invoices/:invoiceId/pdf
- * @desc    Generate invoice PDF
- * @access  Private (Admin or Client)
- */
-router.get('/:invoiceId/pdf', authenticateToken, generateInvoicePDF);
-
-/**
- * @route   POST /api/invoices/:invoiceId/send
- * @desc    Send invoice via email
- * @access  Private (Admin)
- */
+router.get('/:invoiceId/pdf', authenticateToken, generateInvoicePDFController);
 router.post('/:invoiceId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendInvoice);
 
 export default router;
