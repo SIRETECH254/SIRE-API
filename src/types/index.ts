@@ -288,8 +288,32 @@ export interface INotification extends Document {
   sentAt?: Date;
   readAt?: Date;
   metadata?: Record<string, any>;
+  // Bidirectional Notification Support
+  actions?: NotificationAction[];
+  context?: NotificationContext;
+  expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface NotificationAction {
+  id: string;
+  label: string;
+  type: 'api' | 'navigate' | 'modal' | 'confirm';
+  endpoint?: string;
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  payload?: Record<string, any>;
+  route?: string;
+  modal?: string;
+  variant?: 'primary' | 'secondary' | 'danger' | 'success';
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string;
+}
+
+export interface NotificationContext {
+  resourceId: string;
+  resourceType: string;
+  additionalData?: Record<string, any>;
 }
 
 // ===== CONTACT MESSAGE TYPES =====

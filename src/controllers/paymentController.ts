@@ -6,6 +6,7 @@ import Client from '../models/Client';
 import { createPaymentRecord, applySuccessfulPayment, initiateMpesaForInvoice, initiatePaystackForInvoice, validatePaymentAmount } from '../services/internal/paymentService';
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from '../services/external/darajaService';
 import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../services/external/paystackService';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 export const createPaymentAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -427,6 +428,56 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
             payment.status = 'failed';
             await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'Client',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });
@@ -469,6 +520,56 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
             payment.status = 'failed';
             await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'Client',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });

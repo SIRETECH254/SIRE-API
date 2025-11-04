@@ -91,6 +91,7 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -249,6 +250,15 @@ export const getUserById = async (req, res, next) => {
 ### updateUserStatus
 **Route:** PUT `/api/users/:userId/status`  |  **Access:** Private (Super Admin)
 
+**Purpose:** Update user account status (deactivate/activate)
+**Process:**
+- Update user `isActive` status
+- **Send in-app notification to user** (if account is deactivated)
+**Response:** Updated user status
+
+**Notifications:**
+- **User** receives in-app notification: "Account Status Changed" (only if account is deactivated) with deactivation message
+
 Controller Implementation:
 ```typescript
 export const updateUserStatus = async (req, res, next) => {
@@ -256,8 +266,31 @@ export const updateUserStatus = async (req, res, next) => {
     const { userId } = req.params; const { isActive } = req.body;
     const user = await User.findById(userId);
     if (!user) return next(errorHandler(404, 'User not found'));
+    // Update status
     if (isActive !== undefined) user.isActive = isActive;
     await user.save();
+
+    // Send notification to user if account is deactivated
+    if (!user.isActive) {
+      try {
+        await createInAppNotification({
+          recipient: user._id.toString(),
+          recipientModel: 'User',
+          category: 'general',
+          subject: 'Account Status Changed',
+          message: `Your admin account has been deactivated. Please contact super admin for assistance.`,
+          metadata: {
+            userId: user._id,
+            isActive: false
+          },
+          io: req.app.get('io')
+        });
+      } catch (notificationError) {
+        console.error('Error sending notification:', notificationError);
+        // Don't fail the request if notification fails
+      }
+    }
+
     res.status(200).json({ success: true, message: 'User status updated successfully', data: { user: { id: user._id, firstName: user.firstName, lastName: user.lastName, email: user.email, isActive: user.isActive, role: user.role } } });
   } catch (e) { next(errorHandler(500, 'Server error while updating user status')); }
 };
@@ -635,7 +668,35 @@ Common responses:
 
 ---
 
-## 🔄 Future Enhancements
+## 🔔 Notification Integration
+
+The User Management system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **User Account Deactivated** (`updateUserStatus`)
+   - **Recipient:** User (only if account is deactivated)
+   - **Category:** `general`
+   - **Subject:** "Account Status Changed"
+   - **Message:** Notifies user that their admin account has been deactivated
+   - **Metadata:** `userId`, `isActive: false`
+
+#### Notification Preferences
+
+All notifications respect user notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
+
+#### Additional Notification Types
+
+Users also receive notifications from other modules:
+- **Quotation Notifications:** Quotation accepted/rejected (for finance/admin who created quotations)
+- **Invoice Notifications:** Invoice created from quotation (confirmation)
+- **Project Notifications:** Assigned to project, project status updated, milestones added/updated
+
+---
+
+## 📊 Database Indexes
 
 - Advanced role management (granular permissions)
 - Audit logs for admin actions

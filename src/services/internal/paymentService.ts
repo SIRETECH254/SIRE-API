@@ -3,6 +3,7 @@ import Invoice from '../../models/Invoice';
 import Client from '../../models/Client';
 import { initiateStkPush } from '../external/darajaService';
 import { initTransaction } from '../external/paystackService';
+import { createInAppNotification } from '../../utils/notificationHelper';
 
 export interface CreatePaymentRecordParams {
   invoice: any;
@@ -93,6 +94,50 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
       invoiceId: invoice._id.toString(), 
       status: invoice.status 
     });
+  }
+
+  // Send bidirectional notification to client
+  try {
+    await createInAppNotification({
+      recipient: payment.client.toString(),
+      recipientModel: 'Client',
+      category: 'payment',
+      subject: 'Payment Successful',
+      message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} has been received successfully. Transaction ID: ${payment.transactionId || 'N/A'}`,
+      actions: [
+        {
+          id: 'view_invoice',
+          label: 'View Invoice',
+          type: 'navigate',
+          route: `/invoices/${payment.invoice}`,
+          variant: 'primary'
+        },
+        {
+          id: 'download_receipt',
+          label: 'Download Receipt',
+          type: 'api',
+          endpoint: `/api/payments/${payment._id}/receipt`,
+          method: 'GET',
+          variant: 'secondary'
+        }
+      ],
+      context: {
+        resourceId: payment.invoice.toString(),
+        resourceType: 'invoice'
+      },
+      metadata: {
+        paymentId: payment._id,
+        invoiceId: invoice._id,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: payment.amount,
+        transactionId: payment.transactionId,
+        paymentDate: payment.paymentDate
+      },
+      io: io
+    });
+  } catch (notificationError) {
+    console.error('Error sending notification:', notificationError);
+    // Don't fail the request if notification fails
   }
 
   return { payment, invoice };

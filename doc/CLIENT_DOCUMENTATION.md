@@ -247,6 +247,7 @@ import { errorHandler } from '../middleware/errorHandler';
 import Client, { IClient } from '../models/Client';
 import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from '../services/internal/notificationService';
 import { generateTokens, generateOTP } from '../utils/index';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -773,6 +774,65 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
     } catch (error: any) {
         console.error('Update client error:', error);
         next(errorHandler(500, "Server error while updating client"));
+    }
+};
+```
+
+#### `updateClientStatus(clientId, isActive)`
+**Purpose:** Update client account status (Admin only)
+**Access:** Admin users (super_admin)
+**Process:**
+- Update client `isActive` status
+- **Send in-app notification to client** (if account is deactivated)
+**Response:** Updated client status
+
+**Notifications:**
+- **Client** receives in-app notification: "Account Status Changed" (only if account is deactivated) with deactivation message
+
+**Controller Implementation:**
+```typescript
+export const updateClientStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { clientId } = req.params;
+        const { isActive }: { isActive: boolean } = req.body;
+
+        const client = await Client.findById(clientId);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
+
+        if (isActive !== undefined) client.isActive = isActive;
+        await client.save();
+
+        // Send notification to client if account is deactivated
+        if (!client.isActive) {
+            try {
+                await createInAppNotification({
+                    recipient: client._id.toString(),
+                    recipientModel: 'Client',
+                    category: 'general',
+                    subject: 'Account Status Changed',
+                    message: `Your account has been deactivated. Please contact support for assistance.`,
+                    metadata: {
+                        clientId: client._id,
+                        isActive: false
+                    },
+                    io: req.app.get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Client status updated successfully",
+            data: { client: { id: client._id, isActive: client.isActive } }
+        });
+    } catch (error: any) {
+        console.error('Update client status error:', error);
+        next(errorHandler(500, "Server error while updating client status"));
     }
 };
 ```
@@ -1546,10 +1606,31 @@ curl -X PUT http://localhost:5000/api/clients/<clientId>/status \
 - View published testimonials
 
 ### Notification Integration
-- Email notifications for important events
-- SMS notifications for payments
-- In-app notifications via Socket.io
-- Notification preferences management
+
+The Client system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Client Account Deactivated** (`updateClientStatus`)
+   - **Recipient:** Client (only if account is deactivated)
+   - **Category:** `general`
+   - **Subject:** "Account Status Changed"
+   - **Message:** Notifies client that their account has been deactivated
+   - **Metadata:** `clientId`, `isActive: false`
+
+#### Notification Preferences
+
+All notifications respect client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
+
+#### Additional Notification Types
+
+Clients also receive notifications from other modules:
+- **Quotation Notifications:** Created, sent, converted to invoice
+- **Invoice Notifications:** Created, sent, paid, overdue, cancelled
+- **Payment Notifications:** Successful, failed
+- **Project Notifications:** Created, status updated, progress updated, milestones added/updated, attachments uploaded
 
 ---
 

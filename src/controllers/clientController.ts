@@ -6,6 +6,7 @@ import { errorHandler } from '../middleware/errorHandler';
 import Client from '../models/Client';
 import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from '../services/internal/notificationService';
 import { generateTokens, generateOTP } from '../utils/index';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 // @desc    Register new client
 // @route   POST /api/clients/register
@@ -737,6 +738,27 @@ export const updateClientStatus = async (req: Request, res: Response, next: Next
         if (isActive !== undefined) client.isActive = isActive;
 
         await client.save();
+
+        // Send notification to client if account is deactivated
+        if (!client.isActive) {
+            try {
+                await createInAppNotification({
+                    recipient: client._id.toString(),
+                    recipientModel: 'Client',
+                    category: 'general',
+                    subject: 'Account Status Changed',
+                    message: `Your account has been deactivated. Please contact support for assistance.`,
+                    metadata: {
+                        clientId: client._id,
+                        isActive: false
+                    },
+                    io: (req.app as any).get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
 
         res.status(200).json({
             success: true,

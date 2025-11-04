@@ -227,6 +227,7 @@ import Client from '../models/Client';
 import { createPaymentRecord, applySuccessfulPayment, initiateMpesaForInvoice, initiatePaystackForInvoice, validatePaymentAmount } from '../services/internal/paymentService';
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from '../services/external/darajaService';
 import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../services/external/paystackService';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -246,7 +247,12 @@ import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../serv
 - Initiate M-Pesa STK push or Paystack payment
 - Return gateway details for tracking
 - Emit Socket.io event
+- **Note:** Notifications are sent via webhook handlers (`mpesaWebhook` or `paystackWebhook`) when payment status changes
 **Response:** Payment data with gateway details
+
+**Notifications:**
+- Notifications are handled by webhook functions (`mpesaWebhook` or `paystackWebhook`)
+- See `mpesaWebhook` and `paystackWebhook` functions for notification details
 
 **Controller Implementation:**
 ```typescript
@@ -380,7 +386,12 @@ export const createPaymentAdmin = async (req: Request, res: Response, next: Next
 - Initiate M-Pesa STK push or Paystack payment
 - Return gateway details for tracking
 - Emit Socket.io event
+- **Note:** Notifications are sent via webhook handlers (`mpesaWebhook` or `paystackWebhook`) when payment status changes
 **Response:** Payment data with gateway details
+
+**Notifications:**
+- Notifications are handled by webhook functions (`mpesaWebhook` or `paystackWebhook`)
+- See `mpesaWebhook` and `paystackWebhook` functions for notification details
 
 **Controller Implementation:**
 ```typescript
@@ -710,9 +721,15 @@ export const deletePayment = async (req: Request, res: Response, next: NextFunct
 - Parse webhook payload
 - Find payment by checkout request ID
 - Update payment status
-- Apply successful payment (updates invoice, emits events)
+- **On Success:** Call `applySuccessfulPayment()` service (updates invoice, sends bidirectional notification to client)
+- **On Failure:** Send bidirectional failure notification to client
 - Emit Socket.io events
 **Response:** Acknowledgment
+
+**Notifications:**
+- **On Success:** Client receives bidirectional notification: "Payment Successful" with actions (View Invoice, Download Receipt)
+  - Notification is sent via `applySuccessfulPayment()` service function
+- **On Failure:** Client receives bidirectional notification: "Payment Failed" with actions (Try Again, View Invoice)
 
 **Controller Implementation:**
 ```typescript
@@ -757,8 +774,58 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
             }
         } else {
             payment.status = 'failed';
-        await payment.save();
+            await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'Client',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });
@@ -777,9 +844,15 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
 - Parse webhook payload
 - Find payment by reference
 - Update payment status
-- Apply successful payment (updates invoice, emits events)
+- **On Success:** Call `applySuccessfulPayment()` service (updates invoice, sends bidirectional notification to client)
+- **On Failure:** Send bidirectional failure notification to client
 - Emit Socket.io events
 **Response:** Acknowledgment
+
+**Notifications:**
+- **On Success:** Client receives bidirectional notification: "Payment Successful" with actions (View Invoice, Download Receipt)
+  - Notification is sent via `applySuccessfulPayment()` service function
+- **On Failure:** Client receives bidirectional notification: "Payment Failed" with actions (Try Again, View Invoice)
 
 **Controller Implementation:**
 ```typescript
@@ -814,6 +887,56 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
             payment.status = 'failed';
             await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'Client',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });
@@ -1449,6 +1572,50 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
     });
   }
 
+  // Send bidirectional notification to client
+  try {
+    await createInAppNotification({
+      recipient: payment.client.toString(),
+      recipientModel: 'Client',
+      category: 'payment',
+      subject: 'Payment Successful',
+      message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} has been received successfully. Transaction ID: ${payment.transactionId || 'N/A'}`,
+      actions: [
+        {
+          id: 'view_invoice',
+          label: 'View Invoice',
+          type: 'navigate',
+          route: `/invoices/${payment.invoice}`,
+          variant: 'primary'
+        },
+        {
+          id: 'download_receipt',
+          label: 'Download Receipt',
+          type: 'api',
+          endpoint: `/api/payments/${payment._id}/receipt`,
+          method: 'GET',
+          variant: 'secondary'
+        }
+      ],
+      context: {
+        resourceId: payment.invoice.toString(),
+        resourceType: 'invoice'
+      },
+      metadata: {
+        paymentId: payment._id,
+        invoiceId: invoice._id,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: payment.amount,
+        transactionId: payment.transactionId,
+        paymentDate: payment.paymentDate
+      },
+      io: io
+    });
+  } catch (notificationError) {
+    console.error('Error sending notification:', notificationError);
+    // Don't fail the request if notification fails
+  }
+
   return { payment, invoice };
 };
 ```
@@ -1875,15 +2042,43 @@ curl -X POST http://localhost:5000/api/payments \
 - Receipt delivery
 
 ### Notification Integration
-- Payment confirmation emails
-- SMS notifications
-- Real-time payment updates
-- Payment reminders
+
+The Payment system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Payment Successful** (`applySuccessfulPayment` - called from webhooks)
+   - **Recipient:** Client
+   - **Category:** `payment`
+   - **Subject:** "Payment Successful"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+     - **"Download Receipt"** button (API action) - Downloads payment receipt
+   - **Message:** Includes payment amount, invoice number, and transaction ID
+   - **Metadata:** `paymentId`, `invoiceId`, `invoiceNumber`, `amount`, `transactionId`, `paymentDate`
+
+2. **Payment Failed** (`mpesaWebhook` / `paystackWebhook` - on failure)
+   - **Recipient:** Client
+   - **Category:** `payment`
+   - **Subject:** "Payment Failed"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Try Again"** button (API action) - Retries payment initiation
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+   - **Message:** Includes payment amount, invoice number, and error information
+   - **Metadata:** `paymentId`, `invoiceId`, `invoiceNumber`, `amount`, `error`
+
+#### Notification Preferences
+
+All notifications respect user/client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
 
 ### Real-time Updates
-- Socket.io payment notifications
-- Live payment status
-- Invoice status updates
+- Socket.io payment notifications (`payment.updated`, `invoice.updated` events)
+- Live payment status updates
+- Invoice status updates (paid/partially_paid)
 - Admin dashboard updates
 
 ---

@@ -302,8 +302,9 @@ import Invoice from '../models/Invoice';
 import Client from '../models/Client';
 import Quotation from '../models/Quotation';
 import Payment from '../models/Payment';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { generateInvoicePDF } from '../utils/generatePDF';
 import { sendInvoiceEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -323,8 +324,12 @@ import { sendInvoiceEmail } from '../services/external/emailService';
 - Update quotation status to 'converted'
 - Link invoice to quotation
 - Update project with invoice reference
+- **Send in-app notification to client** (invoice created)
 - Save invoice
 **Response:** Complete invoice data with populated references
+
+**Notifications:**
+- **Client** receives in-app notification: "New Invoice Created" with invoice number, amount, and due date
 
 **Important:** 
 - Only `quotation` ID is required in request body
@@ -400,6 +405,27 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
         await invoice.populate('client', 'firstName lastName email company');
         await invoice.populate('quotation', 'quotationNumber');
         await invoice.populate('createdBy', 'firstName lastName email');
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'New Invoice Created',
+                message: `A new invoice ${invoice.invoiceNumber} has been created. Amount: $${invoice.totalAmount.toFixed(2)}`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    totalAmount: invoice.totalAmount,
+                    dueDate: invoice.dueDate
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -639,8 +665,11 @@ export const deleteInvoice = async (req: Request, res: Response, next: NextFunct
 - Set status to 'paid'
 - Set paidDate
 - Create payment record
-- Emit notification
+- **Send in-app notification to client** (invoice paid)
 **Response:** Updated invoice
+
+**Notifications:**
+- **Client** receives in-app notification: "Invoice Paid" with invoice number and payment details
 
 **Controller Implementation:**
 ```typescript
@@ -673,13 +702,34 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
             const payment = new Payment({
                 invoice: invoice._id,
                 client: invoice.client,
-                amount: invoice.totalAmount - (invoice.paidAmount - invoice.totalAmount),
+                amount: invoice.totalAmount,
                 paymentMethod,
                 status: 'completed',
                 transactionId,
                 paymentDate: new Date()
             });
             await payment.save();
+        }
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'payment',
+                subject: 'Invoice Paid',
+                message: `Invoice ${invoice.invoiceNumber} has been marked as paid. Thank you for your payment!`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    paidAmount: invoice.paidAmount,
+                    paymentDate: invoice.paidDate
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
@@ -703,8 +753,14 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
 **Process:**
 - Find invoices past due date
 - Update status to 'overdue'
+- **Send bidirectional in-app notification to client** (invoice overdue with actions)
 - Send reminder emails
 **Response:** List of marked invoices
+
+**Notifications:**
+- **Client** receives bidirectional in-app notification: "Invoice Overdue" with actions:
+  - **"Pay Now"** button (API action) - Directly initiates payment with confirmation
+  - **"View Invoice"** button (Navigate action) - Opens invoice details page
 
 **Controller Implementation:**
 ```typescript
@@ -720,6 +776,55 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
 
         invoice.status = 'overdue';
         await invoice.save();
+
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'Invoice Overdue',
+                message: `Invoice ${invoice.invoiceNumber} is now overdue. Please make payment as soon as possible.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            method: 'mpesa',
+                            amount: invoice.totalAmount - invoice.paidAmount
+                        },
+                        variant: 'primary',
+                        requiresConfirmation: true,
+                        confirmationMessage: `Pay $${invoice.totalAmount - invoice.paidAmount} for invoice ${invoice.invoiceNumber}?`
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    totalAmount: invoice.totalAmount
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -744,8 +849,11 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
 **Process:**
 - Update status to 'cancelled'
 - Log cancellation reason
-- Emit notification
+- **Send in-app notification to client** (if invoice was sent or paid)
 **Response:** Updated invoice
+
+**Notifications:**
+- **Client** receives in-app notification: "Invoice Cancelled" (only if invoice was previously sent or paid) with cancellation reason
 
 **Controller Implementation:**
 ```typescript
@@ -764,11 +872,36 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "Cannot cancel a paid invoice"));
         }
 
+        // Save old status before any checks
+        const oldStatus = invoice.status;
+
         invoice.status = 'cancelled';
         if (reason) {
             invoice.notes = `Cancellation reason: ${reason}`;
         }
         await invoice.save();
+
+        // Send notification to client if invoice was sent or paid
+        if (oldStatus === 'sent' || oldStatus === 'paid') {
+            try {
+                await createInAppNotification({
+                    recipient: invoice.client.toString(),
+                    recipientModel: 'Client',
+                    category: 'invoice',
+                    subject: 'Invoice Cancelled',
+                    message: `Invoice ${invoice.invoiceNumber} has been cancelled. Reason: ${reason || 'No reason provided'}`,
+                    metadata: {
+                        invoiceId: invoice._id,
+                        invoiceNumber: invoice.invoiceNumber,
+                        reason: reason
+                    },
+                    io: req.app.get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
 
         res.status(200).json({
             success: true,
@@ -886,8 +1019,14 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
 - Upload PDF to Cloudinary
 - Send email with PDF attachment and URL
 - Update status to 'sent' if currently 'draft'
+- **Send bidirectional in-app notification to client** (invoice sent with actions)
 - Track send details
 **Response:** Confirmation message with PDF URL
+
+**Notifications:**
+- **Client** receives bidirectional in-app notification: "Invoice Sent" with actions:
+  - **"Pay Now"** button (API action) - Directly initiates payment
+  - **"View Invoice"** button (Navigate action) - Opens invoice details page
 
 **Controller Implementation:**
 ```typescript
@@ -974,6 +1113,52 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
         if (invoice.status === 'draft') {
             invoice.status = 'sent';
             await invoice.save();
+        }
+
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client._id.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'Invoice Sent',
+                message: `Invoice ${invoice.invoiceNumber} has been sent to your email. Please make payment by ${new Date(invoice.dueDate).toLocaleDateString()}.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            amount: invoice.totalAmount
+                        },
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    pdfUrl: pdfUrl
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
@@ -1762,10 +1947,57 @@ curl -X GET http://localhost:5000/api/invoices/stats \
 - Financial reporting
 
 ### Notification Integration
-- Email invoice delivery
-- Payment reminders
-- Overdue alerts
-- Payment confirmations
+
+The Invoice system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Invoice Created** (`createInvoice`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "New Invoice Created"
+   - **Message:** Includes invoice number, amount, and due date
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `totalAmount`, `dueDate`
+
+2. **Invoice Sent** (`sendInvoice`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Sent"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Pay Now"** button (API action) - Directly initiates payment
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `dueDate`, `pdfUrl`
+
+3. **Invoice Paid** (`markAsPaid`)
+   - **Recipient:** Client
+   - **Category:** `payment`
+   - **Subject:** "Invoice Paid"
+   - **Message:** Includes invoice number and payment details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `paidAmount`, `paymentDate`
+
+4. **Invoice Overdue** (`markAsOverdue`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Overdue"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Pay Now"** button (API action) - Directly initiates payment with confirmation dialog
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `dueDate`, `totalAmount`
+
+5. **Invoice Cancelled** (`cancelInvoice`)
+   - **Recipient:** Client (only if invoice was previously sent or paid)
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Cancelled"
+   - **Message:** Includes cancellation reason
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `reason`
+
+#### Notification Preferences
+
+All notifications respect user/client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
 
 ---
 

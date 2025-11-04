@@ -7,6 +7,7 @@ import Project from '../models/Project';
 import { generateQuotationPDF } from '../utils/generatePDF';
 import { v2 as cloudinary } from 'cloudinary';
 import { sendQuotationEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -108,6 +109,26 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         // Populate references
         await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'New Quotation Created',
+                message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -289,6 +310,47 @@ export const acceptQuotation = async (req: Request, res: Response, next: NextFun
         quotation.status = 'accepted';
         await quotation.save();
 
+        // Send bidirectional notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Accepted',
+                message: `Client has accepted quotation ${quotation.quotationNumber}. You can now convert it to an invoice.`,
+                actions: [
+                    {
+                        id: 'create_invoice',
+                        label: 'Create Invoice',
+                        type: 'api',
+                        endpoint: `/api/quotation/${quotation._id}/convert-to-invoice`,
+                        method: 'POST',
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_quotation',
+                        label: 'View Quotation',
+                        type: 'navigate',
+                        route: `/quotations/${quotation._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: quotation._id.toString(),
+                    resourceType: 'quotation'
+                },
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    projectId: quotation.project
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({ success: true, message: "Quotation accepted successfully", data: { quotation } });
 
     } catch (error: any) {
@@ -316,6 +378,26 @@ export const rejectQuotation = async (req: Request, res: Response, next: NextFun
             quotation.notes = `Rejection reason: ${reason}`;
         }
         await quotation.save();
+
+        // Send notification to admin who created the quotation
+        try {
+            await createInAppNotification({
+                recipient: quotation.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'quotation',
+                subject: 'Quotation Rejected',
+                message: `Client has rejected quotation ${quotation.quotationNumber}. Reason: ${reason || 'No reason provided'}`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    reason: reason
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({ success: true, message: "Quotation rejected", data: { quotation } });
 
@@ -379,6 +461,42 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
         await quotation.save();
 
         await invoice.populate('client', 'firstName lastName email company');
+
+        // Send notifications to client and admin
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'Client',
+                category: 'invoice',
+                subject: 'Invoice Created from Quotation',
+                message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Admin/Finance confirmation
+            await createInAppNotification({
+                recipient: invoice.createdBy.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Created',
+                message: `Invoice ${invoice.invoiceNumber} has been created from quotation ${quotation.quotationNumber}.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -560,6 +678,26 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         if (quotation.status === 'pending') {
             quotation.status = 'sent';
             await quotation.save();
+        }
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: quotation.client._id.toString(),
+                recipientModel: 'Client',
+                category: 'quotation',
+                subject: 'Quotation Sent',
+                message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,
+                metadata: {
+                    quotationId: quotation._id,
+                    quotationNumber: quotation.quotationNumber,
+                    pdfUrl: pdfUrl
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
