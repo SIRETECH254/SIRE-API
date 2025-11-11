@@ -55,6 +55,10 @@ const userSchema = new Schema<IUser>({
     type: String,
     default: null
   },
+  avatarPublicId: {
+    type: String,
+    default: null
+  },
   // OTP Verification Fields
   otpCode: {
     type: String,

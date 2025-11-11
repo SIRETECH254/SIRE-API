@@ -25,31 +25,14 @@ const app = express();
 
 const PORT = process.env.PORT || 4000;
 
-// CORS Configuration with fallback defaults
-const getAllowedOrigins = () => {
-  // Default fallback origins for SIRE API
-  const defaultOrigins = [
-    'http://localhost:4000',
-    'http://localhost:5173',
-    'http://localhost:5174'
-  ];
-  
-  if (!process.env.CORS_ORIGIN) {
-    console.warn('⚠️  CORS_ORIGIN not set in environment variables, using default origins:', defaultOrigins);
-    return defaultOrigins;
-  }
-  
-  const origins = process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean);
-  
-  if (origins.length === 0) {
-    console.warn('⚠️  CORS_ORIGIN is empty, using default origins:', defaultOrigins);
-    return defaultOrigins;
-  }
-  
-  return origins;
-};
-
-const allowedOrigins = getAllowedOrigins();
+// CORS Configuration with explicit origins
+const allowedOrigins = [
+  'http://localhost:8081',
+  'http://localhost:8082',
+  'http://localhost:4000',
+  'https://sire-api.onrender.com',
+  'https://sire-admin.onrender.com'
+];
 
 // CORS middleware configuration
 app.use(cors({
@@ -269,7 +252,7 @@ server.listen(PORT, (err?: Error) => {
     console.log(`🚀 SIRE Tech API Server running on http://localhost:${PORT}`);
     console.log(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔒 CORS Origins: ${process.env.CORS_ORIGIN || 'Using defaults'}`);
+    console.log(`🔒 CORS Origins: ${allowedOrigins.join(', ')}`);
     console.log(`🔌 Socket.io enabled for real-time features`);
   } 
   else 
