@@ -11,7 +11,8 @@ export interface IUser extends Document {
   phone?: string;
   isActive: boolean;
   emailVerified: boolean;
-  avatar?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   // OTP Verification Fields
   otpCode?: string;
   otpExpiry?: Date;

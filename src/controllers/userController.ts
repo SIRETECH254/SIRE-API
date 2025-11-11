@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
 import { createInAppNotification } from '../utils/notificationHelper';
+import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 
 // @desc    Get user profile
 // @route   GET /api/users/profile
@@ -51,7 +52,7 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
             firstName?: string;
             lastName?: string;
             phone?: string;
-            avatar?: string;
+            avatar?: string | null;
         } = req.body;
 
         const user = await User.findById(req.user?._id);
@@ -64,7 +65,48 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
         if (firstName) user.firstName = firstName;
         if (lastName) user.lastName = lastName;
         if (phone) user.phone = phone;
-        if (avatar) user.avatar = avatar;
+
+        // Handle avatar upload via multipart/form-data
+        if (req.file) {
+            const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            user.avatar = uploadResult.url;
+            user.avatarPublicId = uploadResult.public_id;
+        } else if (
+            avatar === null ||
+            (typeof avatar === 'string' && avatar.trim().length === 0)
+        ) {
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            user.avatar = null;
+            user.avatarPublicId = null;
+        } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            // Allow direct avatar URL updates (e.g., already uploaded images)
+            user.avatar = avatar.trim();
+            user.avatarPublicId = null;
+        }
 
         await user.save();
 

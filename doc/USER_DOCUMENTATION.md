@@ -38,6 +38,7 @@ interface IUser {
   isActive: boolean;                // soft-disable account
   emailVerified: boolean;           // verified via OTP in Auth flow
   avatar?: string;
+  avatarPublicId?: string;          // Cloudinary public_id for lifecycle management
   // OTP Verification
   otpCode?: string;                 // select: false
   otpExpiry?: Date;                 // select: false
@@ -92,6 +93,7 @@ import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
 import { createInAppNotification } from '../utils/notificationHelper';
+import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 ```
 
 ### Functions Overview
@@ -127,7 +129,10 @@ export const getUserProfile = async (req, res, next) => {
 ### updateUserProfile
 **Route:** PUT `/api/users/profile`  |  **Access:** Private
 
-Allows a user to update their own profile (firstName, lastName, phone, avatar).
+Allows a user to update their own profile (firstName, lastName, phone) and avatar. Avatars can be:
+- Uploaded directly as multipart form-data (`avatar` file field).
+- Provided as an already-hosted URL string.
+- Removed entirely by sending `avatar: null` (or an empty string), which deletes the stored Cloudinary asset.
 
 Controller Implementation:
 ```typescript
@@ -139,7 +144,43 @@ export const updateUserProfile = async (req, res, next) => {
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     if (phone) user.phone = phone;
-    if (avatar) user.avatar = avatar;
+    if (req.file) {
+      const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+      user.avatar = uploadResult.url;
+      user.avatarPublicId = uploadResult.public_id;
+    } else if (
+      avatar === null ||
+      (typeof avatar === 'string' && avatar.trim().length === 0)
+    ) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+
+      user.avatar = null;
+      user.avatarPublicId = null;
+    } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+
+      user.avatar = avatar.trim();
+      user.avatarPublicId = null;
+    }
     await user.save();
     res.status(200).json({ success: true, message: 'Profile updated successfully', data: { user: { /* fields */ } } });
   } catch (e) { next(errorHandler(500, 'Server error while updating profile')); }
@@ -373,7 +414,7 @@ export const adminCreateCustomer = async (req, res, next) => {
 
 ```typescript
 GET    /profile                  // Get current user profile
-PUT    /profile                  // Update own profile
+PUT    /profile                  // Update own profile (multipart/form-data for avatar)
 PUT    /change-password          // Change password
 GET    /notifications            // Get notification preferences
 PUT    /notifications            // Update notification preferences
@@ -407,6 +448,7 @@ import {
     adminCreateCustomer
 } from '../controllers/userController';
 import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/auth';
+import { uploadUserAvatar } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -422,7 +464,7 @@ router.get('/profile', authenticateToken, getUserProfile);
  * @desc    Update own profile
  * @access  Private
  */
-router.put('/profile', authenticateToken, updateUserProfile);
+router.put('/profile', authenticateToken, uploadUserAvatar.single('avatar'), updateUserProfile);
 
 /**
  * @route   PUT /api/users/change-password
@@ -497,13 +539,15 @@ router.delete('/:userId', authenticateToken, requireAdmin, deleteUser);
 export default router;
 ```
 
+> **Note:** `uploadUserAvatar` comes from `config/cloudinary.ts` and wraps Multer + Cloudinary storage. It enforces a 2 MB limit and only accepts image mimetypes, automatically uploading the file to `sire-tech/avatars`.
+
 ### Route Details
 
 #### `GET /api/users/profile`
 Returns the current user's profile.
 
 #### `PUT /api/users/profile`
-Update own profile fields.
+Update own profile fields. Accepts `multipart/form-data` with optional `avatar` file field (image). When no file is provided, you may still send a JSON body containing `avatar` as a hosted URL.
 
 #### `PUT /api/users/change-password`
 Change password after verifying current password.
@@ -586,7 +630,17 @@ curl -X GET http://localhost:5000/api/users/profile \
   -H "Authorization: Bearer <access_token>"
 ```
 
-### Update Profile
+### Update Profile (with avatar upload)
+```bash
+curl -X PUT http://localhost:5000/api/users/profile \
+  -H "Authorization: Bearer <access_token>" \
+  -F "firstName=John" \
+  -F "lastName=Smith" \
+  -F "phone=+254712345679" \
+  -F "avatar=@/path/to/profile-photo.jpg;type=image/jpeg"
+```
+
+### Update Profile (using existing avatar URL)
 ```bash
 curl -X PUT http://localhost:5000/api/users/profile \
   -H "Content-Type: application/json" \
@@ -595,9 +649,20 @@ curl -X PUT http://localhost:5000/api/users/profile \
     "firstName": "John",
     "lastName": "Smith",
     "phone": "+254712345679",
-    "avatar": "https://cloudinary.com/..."
+    "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
   }'
 ```
+
+### Remove Avatar
+```bash
+curl -X PUT http://localhost:5000/api/users/profile \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{
+    "avatar": null
+  }'
+```
+Sending `avatar: null` (or an empty string) removes the stored avatar and deletes the file from Cloudinary if it exists.
 
 ### Change Password
 ```bash

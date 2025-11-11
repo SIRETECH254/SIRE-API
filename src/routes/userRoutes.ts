@@ -14,6 +14,7 @@ import {
     adminCreateCustomer
 } from '../controllers/userController';
 import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/auth';
+import { uploadUserAvatar } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -175,7 +176,7 @@ router.get('/profile', authenticateToken, getUserProfile);
  * @desc    Update own profile
  * @access  Private
  */
-router.put('/profile', authenticateToken, updateUserProfile);
+router.put('/profile', authenticateToken, uploadUserAvatar.single('avatar'), updateUserProfile);
 
 /**
  * @route   PUT /api/users/change-password
