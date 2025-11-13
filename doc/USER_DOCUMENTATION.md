@@ -104,6 +104,7 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 - `updateNotificationPreferences()` - Update notification preferences
 - `getAllUsers()` - Get all users (admin)
 - `getUserById()` - Get single user (admin)
+- `updateUser()` - Update any user (admin)
 - `updateUserStatus()` - Update user status (super admin)
 - `setUserAdmin()` - Set user admin role (super admin)
 - `getUserRoles()` - Get user roles (admin)
@@ -288,6 +289,99 @@ export const getUserById = async (req, res, next) => {
 };
 ```
 
+### updateUser
+**Route:** PUT `/api/users/:userId`  |  **Access:** Private (Admin: super_admin, finance, project_manager)
+
+Allows an admin to update any user's profile information including firstName, lastName, phone, email, and avatar. Email updates are validated for format and uniqueness. Avatars can be:
+- Uploaded directly as multipart form-data (`avatar` file field).
+- Provided as an already-hosted URL string.
+- Removed entirely by sending `avatar: null` (or an empty string), which deletes the stored Cloudinary asset.
+
+Controller Implementation:
+```typescript
+export const updateUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { firstName, lastName, phone, email, avatar } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return next(errorHandler(404, 'User not found'));
+    
+    // Update allowed fields
+    if (firstName) user.firstName = firstName;
+    if (lastName) user.lastName = lastName;
+    if (phone) user.phone = phone;
+    
+    // Email update requires validation
+    if (email) {
+      const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+      if (!emailRegex.test(email)) return next(errorHandler(400, 'Please provide a valid email'));
+      
+      // Check if email is already taken by another user
+      const existingUser = await User.findOne({ 
+        email: email.toLowerCase(),
+        _id: { $ne: userId }
+      });
+      
+      if (existingUser) return next(errorHandler(400, 'Email is already taken by another user'));
+      
+      user.email = email.toLowerCase();
+    }
+
+    // Handle avatar upload via multipart/form-data
+    if (req.file) {
+      const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+      user.avatar = uploadResult.url;
+      user.avatarPublicId = uploadResult.public_id;
+    } else if (avatar === null || (typeof avatar === 'string' && avatar.trim().length === 0)) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+      user.avatar = null;
+      user.avatarPublicId = null;
+    } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+      if (user.avatarPublicId) {
+        try {
+          await deleteFromCloudinary(user.avatarPublicId);
+        } catch (deleteError) {
+          console.error('Failed to delete previous avatar:', deleteError);
+        }
+      }
+      user.avatar = avatar.trim();
+      user.avatarPublicId = null;
+    }
+    
+    await user.save();
+    res.status(200).json({ 
+      success: true, 
+      message: 'User updated successfully', 
+      data: { 
+        user: { 
+          id: user._id, 
+          firstName: user.firstName, 
+          lastName: user.lastName, 
+          email: user.email, 
+          phone: user.phone, 
+          avatar: user.avatar, 
+          role: user.role, 
+          isActive: user.isActive 
+        } 
+      } 
+    });
+  } catch (e) { next(errorHandler(500, 'Server error while updating user')); }
+};
+```
+
 ### updateUserStatus
 **Route:** PUT `/api/users/:userId/status`  |  **Access:** Private (Super Admin)
 
@@ -421,6 +515,7 @@ PUT    /notifications            // Update notification preferences
 POST   /admin-create             // Admin create customer
 GET    /                         // Get all users (admin)
 GET    /:userId                  // Get single user (admin)
+PUT    /:userId                  // Update user (admin)
 PUT    /:userId/status           // Update user status (super admin)
 PUT    /:userId/admin            // Set user admin role (super admin)
 GET    /:userId/roles            // Get user roles (admin)
@@ -441,6 +536,7 @@ import {
     updateNotificationPreferences,
     getAllUsers,
     getUserById,
+    updateUser,
     updateUserStatus,
     setUserAdmin,
     getUserRoles,
@@ -509,6 +605,13 @@ router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'pr
 router.get('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getUserById);
 
 /**
+ * @route   PUT /api/users/:userId
+ * @desc    Update user (admin)
+ * @access  Private (Admin only)
+ */
+router.put('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), uploadUserAvatar.single('avatar'), updateUser);
+
+/**
  * @route   PUT /api/users/:userId/status
  * @desc    Update user status (admin)
  * @access  Private (Admin only)
@@ -557,6 +660,9 @@ List users with pagination and filters.
 
 #### `GET /api/users/:userId`
 Get single user details.
+
+#### `PUT /api/users/:userId`
+Update any user's profile information (admin only). Allows updating firstName, lastName, phone, email, and avatar. Email updates are validated for format and uniqueness.
 
 #### `PUT /api/users/:userId/status`
 Toggle user active status (super admin only).
@@ -679,6 +785,32 @@ curl -X PUT http://localhost:5000/api/users/change-password \
 ```bash
 curl -X GET "http://localhost:5000/api/users?page=1&limit=10&search=john&status=active" \
   -H "Authorization: Bearer <admin_access_token>"
+```
+
+### Update User (Admin)
+```bash
+# Update user with avatar upload
+curl -X PUT http://localhost:5000/api/users/<userId> \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -F "firstName=John" \
+  -F "lastName=Smith" \
+  -F "phone=+254712345679" \
+  -F "email=john.smith@example.com" \
+  -F "avatar=@/path/to/profile-photo.jpg;type=image/jpeg"
+```
+
+```bash
+# Update user with JSON (using existing avatar URL)
+curl -X PUT http://localhost:5000/api/users/<userId> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{
+    "firstName": "John",
+    "lastName": "Smith",
+    "phone": "+254712345679",
+    "email": "john.smith@example.com",
+    "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
+  }'
 ```
 
 ### Update User Status (Super Admin)
