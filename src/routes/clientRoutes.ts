@@ -22,6 +22,7 @@ import {
     getClientQuotations
 } from '../controllers/clientController';
 import { authenticateToken, authorizeRoles, requireOwnershipOrAdmin } from '../middleware/auth';
+import { uploadUserAvatar } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -79,7 +80,7 @@ router.get('/profile', authenticateToken, getClientProfile);
  * @desc    Update own profile
  * @access  Private (Client)
  */
-router.put('/profile', authenticateToken, updateClientProfile);
+router.put('/profile', authenticateToken, uploadUserAvatar.single('avatar'), updateClientProfile);
 
 /**
  * @route   PUT /api/clients/change-password
@@ -114,7 +115,7 @@ router.get('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'),
  * @desc    Update client (admin)
  * @access  Private (Client or Admin)
  */
-router.put('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'), updateClient);
+router.put('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'), uploadUserAvatar.single('avatar'), updateClient);
 
 /**
  * @route   DELETE /api/clients/:clientId

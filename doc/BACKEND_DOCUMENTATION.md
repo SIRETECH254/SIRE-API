@@ -110,6 +110,8 @@ interface IClient {
   address?: string;
   city?: string;
   country?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   isActive: boolean;
   emailVerified: boolean;
   createdAt: Date;
@@ -124,6 +126,8 @@ interface IClient {
 - `phone` - Contact number
 - `company` - Business name (optional)
 - `address`, `city`, `country` - Location details
+- `avatar` - Profile picture URL (optional)
+- `avatarPublicId` - Cloudinary public ID for avatar (optional)
 - `isActive` - Account status
 - `emailVerified` - Email verification status
 - Timestamps
@@ -473,9 +477,11 @@ interface IContactMessage {
 ### 2. Client Controllers
 
 #### `clientController.ts`
+- `registerClient()` - Register new client with optional avatar upload
 - `getAllClients()` - Get all clients (admin)
 - `getClient()` - Get single client
-- `updateClient()` - Update client profile
+- `updateClientProfile()` - Update own profile with avatar support
+- `updateClient()` - Update client profile (admin) with avatar support
 - `deleteClient()` - Delete client (admin)
 - `getClientStats()` - Get client statistics
 - `getClientProjects()` - Get client's projects
@@ -675,7 +681,7 @@ GET    /me                        // Get current user profile
 ```typescript
 GET    /                          // Get all clients (admin)
 GET    /:id                       // Get single client
-PUT    /:id                       // Update client
+PUT    /:id                       // Update client (with avatar upload support)
 DELETE /:id                       // Delete client (admin)
 GET    /:id/stats                 // Get client stats
 GET    /:id/projects              // Get client projects

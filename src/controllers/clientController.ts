@@ -7,6 +7,7 @@ import Client from '../models/Client';
 import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from '../services/internal/notificationService';
 import { generateTokens, generateOTP } from '../utils/index';
 import { createInAppNotification } from '../utils/notificationHelper';
+import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 
 // @desc    Register new client
 // @route   POST /api/clients/register
@@ -57,6 +58,21 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
         const otp: string = generateOTP();
         const otpExpiry: Date = new Date(Date.now() + (parseInt(process.env.OTP_EXP_MINUTES || '10')) * 60 * 1000);
 
+        // Handle avatar upload if provided
+        let avatarUrl: string | null = null;
+        let avatarPublicId: string | null = null;
+        
+        if (req.file) {
+            try {
+                const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+                avatarUrl = uploadResult.url;
+                avatarPublicId = uploadResult.public_id;
+            } catch (uploadError) {
+                console.error('Avatar upload error during registration:', uploadError);
+                // Continue with registration even if avatar upload fails
+            }
+        }
+
         // Create client
         const client = new Client({
             firstName,
@@ -68,6 +84,8 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
             address,
             city,
             country,
+            avatar: avatarUrl,
+            avatarPublicId: avatarPublicId,
             otpCode: otp,
             otpExpiry,
             emailVerified: false
@@ -89,6 +107,7 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
                 email: client.email,
                 phone: client.phone,
                 company: client.company,
+                avatar: client.avatar,
                 emailVerified: client.emailVerified
             }
         });
@@ -438,7 +457,7 @@ export const getClientProfile = async (req: Request, res: Response, next: NextFu
 // @access  Private
 export const updateClientProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { firstName, lastName, phone, company, address, city, country }: {
+        const { firstName, lastName, phone, company, address, city, country, avatar }: {
             firstName?: string;
             lastName?: string;
             phone?: string;
@@ -446,6 +465,7 @@ export const updateClientProfile = async (req: Request, res: Response, next: Nex
             address?: string;
             city?: string;
             country?: string;
+            avatar?: string | null;
         } = req.body;
 
         const client = await Client.findById(req.user?._id);
@@ -463,6 +483,48 @@ export const updateClientProfile = async (req: Request, res: Response, next: Nex
         if (city) client.city = city;
         if (country) client.country = country;
 
+        // Handle avatar upload via multipart/form-data
+        if (req.file) {
+            const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            client.avatar = uploadResult.url;
+            client.avatarPublicId = uploadResult.public_id;
+        } else if (
+            avatar === null ||
+            (typeof avatar === 'string' && avatar.trim().length === 0)
+        ) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            client.avatar = null;
+            client.avatarPublicId = null;
+        } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            // Allow direct avatar URL updates (e.g., already uploaded images)
+            client.avatar = avatar.trim();
+            client.avatarPublicId = null;
+        }
+
         await client.save();
 
         res.status(200).json({
@@ -478,7 +540,8 @@ export const updateClientProfile = async (req: Request, res: Response, next: Nex
                     company: client.company,
                     address: client.address,
                     city: client.city,
-                    country: client.country
+                    country: client.country,
+                    avatar: client.avatar
                 }
             }
         });
@@ -670,7 +733,7 @@ export const getClient = async (req: Request, res: Response, next: NextFunction)
 export const updateClient = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { clientId } = req.params;
-        const { firstName, lastName, phone, company, address, city, country }: {
+        const { firstName, lastName, phone, company, address, city, country, avatar }: {
             firstName?: string;
             lastName?: string;
             phone?: string;
@@ -678,6 +741,7 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
             address?: string;
             city?: string;
             country?: string;
+            avatar?: string | null;
         } = req.body;
 
         const client = await Client.findById(clientId);
@@ -695,6 +759,48 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
         if (city) client.city = city;
         if (country) client.country = country;
 
+        // Handle avatar upload via multipart/form-data
+        if (req.file) {
+            const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            client.avatar = uploadResult.url;
+            client.avatarPublicId = uploadResult.public_id;
+        } else if (
+            avatar === null ||
+            (typeof avatar === 'string' && avatar.trim().length === 0)
+        ) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            client.avatar = null;
+            client.avatarPublicId = null;
+        } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            // Allow direct avatar URL updates (e.g., already uploaded images)
+            client.avatar = avatar.trim();
+            client.avatarPublicId = null;
+        }
+
         await client.save();
 
         res.status(200).json({
@@ -710,7 +816,8 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
                     company: client.company,
                     address: client.address,
                     city: client.city,
-                    country: client.country
+                    country: client.country,
+                    avatar: client.avatar
                 }
             }
         });
