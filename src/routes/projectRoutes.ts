@@ -363,10 +363,10 @@ router.delete('/:projectId/milestones/:milestoneId', authenticateToken, deleteMi
 
 /**
  * @route   POST /api/projects/:projectId/attachments
- * @desc    Upload project attachment
+ * @desc    Upload project attachments (multiple files supported, max 10)
  * @access  Private (Admin or Assigned Team Member)
  */
-router.post('/:projectId/attachments', authenticateToken, uploadProjectAttachment.single('file'), uploadAttachment);
+router.post('/:projectId/attachments', authenticateToken, uploadProjectAttachment.array('files', 10), uploadAttachment);
 
 /**
  * @route   DELETE /api/projects/:projectId/attachments/:attachmentId

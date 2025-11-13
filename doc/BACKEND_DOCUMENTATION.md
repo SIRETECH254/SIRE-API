@@ -569,7 +569,7 @@ interface IContactMessage {
 - `addMilestone()` - Add project milestone
 - `updateMilestone()` - Update milestone
 - `deleteMilestone()` - Delete milestone
-- `uploadAttachment()` - Upload project file
+- `uploadAttachment()` - Upload project files (supports multiple files, max 10 per request)
 - `deleteAttachment()` - Delete project file
 - `getClientProjects()` - Get client's projects
 - `getAssignedProjects()` - Get projects assigned to current user
@@ -780,7 +780,7 @@ PATCH  /:projectId/progress       // Update progress
 POST   /:projectId/milestones     // Add milestone
 PATCH  /:projectId/milestones/:milestoneId  // Update milestone
 DELETE /:projectId/milestones/:milestoneId  // Delete milestone
-POST   /:projectId/attachments    // Upload attachment
+POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
 DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 ```
 
@@ -970,6 +970,8 @@ sire-api/
 
 #### File Upload
 - File upload is handled via `config/cloudinary.ts` with Cloudinary integration
+- **Project Attachments:** Supports multiple file uploads (max 10 files per request, 10MB per file)
+- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
 
 ---
 
