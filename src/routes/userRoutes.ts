@@ -7,6 +7,7 @@ import {
     updateNotificationPreferences,
     getAllUsers,
     getUserById,
+    updateUser,
     updateUserStatus,
     setUserAdmin,
     getUserRoles,
@@ -101,6 +102,20 @@ const router = express.Router();
  *     responses:
  *       '200':
  *         description: User
+ *   put:
+ *     tags: [Users]
+ *     summary: Update user (admin)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Updated
  *   delete:
  *     tags: [Users]
  *     summary: Delete user
@@ -219,6 +234,13 @@ router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'pr
  * @access  Private (Admin only)
  */
 router.get('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getUserById);
+
+/**
+ * @route   PUT /api/users/:userId
+ * @desc    Update user (admin)
+ * @access  Private (Admin only)
+ */
+router.put('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), uploadUserAvatar.single('avatar'), updateUser);
 
 /**
  * @route   PUT /api/users/:userId/status

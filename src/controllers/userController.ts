@@ -337,6 +337,118 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
     }
 };
 
+// @desc    Update user (Admin only)
+// @route   PUT /api/users/:userId
+// @access  Private (Admin)
+export const updateUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { userId } = req.params;
+        const { firstName, lastName, phone, email, avatar }: {
+            firstName?: string;
+            lastName?: string;
+            phone?: string;
+            email?: string;
+            avatar?: string | null;
+        } = req.body;
+
+        const user = await User.findById(userId);
+
+        if (!user) {
+            return next(errorHandler(404, "User not found"));
+        }
+
+        // Update allowed fields
+        if (firstName) user.firstName = firstName;
+        if (lastName) user.lastName = lastName;
+        if (phone) user.phone = phone;
+        
+        // Email update requires validation
+        if (email) {
+            const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+            if (!emailRegex.test(email)) {
+                return next(errorHandler(400, "Please provide a valid email"));
+            }
+            
+            // Check if email is already taken by another user
+            const existingUser = await User.findOne({ 
+                email: email.toLowerCase(),
+                _id: { $ne: userId }
+            });
+            
+            if (existingUser) {
+                return next(errorHandler(400, "Email is already taken by another user"));
+            }
+            
+            user.email = email.toLowerCase();
+        }
+
+        // Handle avatar upload via multipart/form-data
+        if (req.file) {
+            const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            user.avatar = uploadResult.url;
+            user.avatarPublicId = uploadResult.public_id;
+        } else if (
+            avatar === null ||
+            (typeof avatar === 'string' && avatar.trim().length === 0)
+        ) {
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            user.avatar = null;
+            user.avatarPublicId = null;
+        } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+            if (user.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(user.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+
+            // Allow direct avatar URL updates (e.g., already uploaded images)
+            user.avatar = avatar.trim();
+            user.avatarPublicId = null;
+        }
+
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "User updated successfully",
+            data: {
+                user: {
+                    id: user._id,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    email: user.email,
+                    phone: user.phone,
+                    avatar: user.avatar,
+                    role: user.role,
+                    isActive: user.isActive
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Update user error:', error);
+        next(errorHandler(500, "Server error while updating user"));
+    }
+};
+
 // @desc    Update user status (Admin only)
 // @route   PUT /api/users/:userId/status
 // @access  Private (Admin)

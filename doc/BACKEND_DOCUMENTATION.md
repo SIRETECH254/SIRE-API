@@ -639,6 +639,7 @@ interface IContactMessage {
 - `updateNotificationPreferences()` - Update notification preferences
 - `getAllUsers()` - Get all admin users
 - `getUserById()` - Get single user (admin)
+- `updateUser()` - Update any user (admin)
 - `updateUserStatus()` - Update user status (super admin)
 - `setUserAdmin()` - Set user admin role (super admin)
 - `getUserRoles()` - Get user roles (admin)
@@ -858,6 +859,7 @@ PUT    /notifications             // Update notification preferences
 POST   /admin-create              // Create admin user (super admin)
 GET    /                          // Get all users (admin)
 GET    /:userId                   // Get single user (admin)
+PUT    /:userId                   // Update user (admin)
 PUT    /:userId/status            // Update user status (super admin)
 PUT    /:userId/admin             // Set user as admin (super admin)
 GET    /:userId/roles             // Get user roles (admin)
