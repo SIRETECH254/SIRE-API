@@ -819,8 +819,11 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
     try {
         const { projectId } = req.params;
 
-        if (!req.file) {
-            return next(errorHandler(400, "No file uploaded"));
+        // Check if files were uploaded (req.files is array when using .array())
+        const files = req.files as Express.Multer.File[];
+        
+        if (!files || files.length === 0) {
+            return next(errorHandler(400, "No files uploaded"));
         }
 
         const project = await Project.findById(projectId);
@@ -829,34 +832,52 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(404, "Project not found"));
         }
 
-        // Upload to Cloudinary
-        const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/project-attachments');
+        const uploadedAttachments: any[] = [];
+        const uploadErrors: string[] = [];
 
-        project.attachments.push({
-            name: req.file.originalname,
-            url: uploadResult.url,
-            uploadedBy: req.user?._id as any,
-            uploadedAt: new Date()
-        } as any);
+        // Upload each file to Cloudinary
+        for (const file of files) {
+            try {
+                const uploadResult = await uploadToCloudinary(file, 'sire-tech/project-attachments');
 
+                const attachment = {
+                    name: file.originalname,
+                    url: uploadResult.url,
+                    uploadedBy: req.user?._id as any,
+                    uploadedAt: new Date()
+                };
+
+                project.attachments.push(attachment as any);
+                uploadedAttachments.push(attachment);
+            } catch (uploadError: any) {
+                console.error(`Error uploading file ${file.originalname}:`, uploadError);
+                uploadErrors.push(file.originalname);
+            }
+        }
+
+        // Save project with all new attachments
         await project.save();
 
-        // Send notifications for new attachment
+        // Send notifications for new attachments
         try {
-            const newAttachment = project.attachments[project.attachments.length - 1];
-            
-            if (newAttachment && req.user?._id) {
+            if (uploadedAttachments.length > 0 && req.user?._id) {
+                const fileCount = uploadedAttachments.length;
+                const fileNames = uploadedAttachments.map(a => a.name).join(', ');
+                
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
                     recipientModel: 'Client',
                     category: 'project',
-                    subject: 'New Project Attachment',
-                    message: `A new file "${newAttachment.name}" has been uploaded to project "${project.title}"`,
+                    subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
+                    message: fileCount === 1 
+                        ? `A new file "${fileNames}" has been uploaded to project "${project.title}"`
+                        : `${fileCount} new files have been uploaded to project "${project.title}": ${fileNames}`,
                     metadata: {
                         projectId: project._id,
                         projectNumber: project.projectNumber,
-                        fileName: newAttachment.name,
+                        fileCount: fileCount,
+                        fileNames: uploadedAttachments.map(a => a.name),
                         uploadedBy: req.user._id
                     },
                     io: (req.app as any).get('io')
@@ -867,17 +888,28 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             // Don't fail the request if notification fails
         }
 
+        // Prepare response message
+        let message = "Attachment uploaded successfully";
+        if (uploadedAttachments.length > 1) {
+            message = `${uploadedAttachments.length} attachments uploaded successfully`;
+        }
+        if (uploadErrors.length > 0) {
+            message += `. ${uploadErrors.length} file(s) failed to upload: ${uploadErrors.join(', ')}`;
+        }
+
         res.status(201).json({
             success: true,
-            message: "Attachment uploaded successfully",
+            message: message,
             data: {
-                attachment: project.attachments[project.attachments.length - 1]
+                attachments: uploadedAttachments,
+                uploadedCount: uploadedAttachments.length,
+                failedCount: uploadErrors.length
             }
         });
 
     } catch (error: any) {
         console.error('Upload attachment error:', error);
-        next(errorHandler(500, "Server error while uploading attachment"));
+        next(errorHandler(500, "Server error while uploading attachments"));
     }
 };
 

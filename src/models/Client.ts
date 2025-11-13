@@ -55,6 +55,14 @@ const clientSchema = new Schema<IClient>({
     trim: true,
     maxlength: [50, 'Country name cannot exceed 50 characters']
   },
+  avatar: {
+    type: String,
+    default: null
+  },
+  avatarPublicId: {
+    type: String,
+    default: null
+  },
   isActive: {
     type: Boolean,
     default: true

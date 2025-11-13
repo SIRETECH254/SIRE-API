@@ -111,6 +111,8 @@ export interface IClient extends Document {
   address?: string;
   city?: string;
   country?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   isActive: boolean;
   emailVerified: boolean;
   // OTP Verification Fields

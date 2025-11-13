@@ -1182,18 +1182,19 @@ export const deleteMilestone = async (req: Request, res: Response, next: NextFun
 };
 ```
 
-#### `uploadAttachment(projectId, file)`
-**Purpose:** Upload project attachment
+#### `uploadAttachment(projectId, files)`
+**Purpose:** Upload project attachments (supports multiple files, up to 10 per request)
 **Access:** Admin or assigned team member
 **Process:**
-- Upload to Cloudinary
-- Store file metadata
-- Track uploader
-- **Send in-app notification to client** (new attachment uploaded)
-**Response:** Attachment details
+- Upload multiple files to Cloudinary (max 10 files per request)
+- Store file metadata for each uploaded file
+- Track uploader for each attachment
+- **Send in-app notification to client** (new attachments uploaded)
+- Handle partial failures gracefully (continue uploading remaining files if one fails)
+**Response:** Array of uploaded attachment details with upload statistics
 
 **Notifications:**
-- **Client** receives in-app notification: "New Project Attachment" with file name and project details
+- **Client** receives in-app notification: "New Project Attachment" (single file) or "New Project Attachments" (multiple files) with file names and project details
 
 **Controller Implementation:**
 ```typescript
@@ -1201,8 +1202,11 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
     try {
         const { projectId } = req.params;
 
-        if (!req.file) {
-            return next(errorHandler(400, "No file uploaded"));
+        // Check if files were uploaded (req.files is array when using .array())
+        const files = req.files as Express.Multer.File[];
+        
+        if (!files || files.length === 0) {
+            return next(errorHandler(400, "No files uploaded"));
         }
 
         const project = await Project.findById(projectId);
@@ -1211,37 +1215,55 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(404, "Project not found"));
         }
 
-        // Upload to Cloudinary
-        const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/project-attachments');
+        const uploadedAttachments: any[] = [];
+        const uploadErrors: string[] = [];
 
-        project.attachments.push({
-            name: req.file.originalname,
+        // Upload each file to Cloudinary
+        for (const file of files) {
+            try {
+                const uploadResult = await uploadToCloudinary(file, 'sire-tech/project-attachments');
+
+                const attachment = {
+                    name: file.originalname,
             url: uploadResult.url,
             uploadedBy: req.user?._id as any,
             uploadedAt: new Date()
-        } as any);
+                };
 
+                project.attachments.push(attachment as any);
+                uploadedAttachments.push(attachment);
+            } catch (uploadError: any) {
+                console.error(`Error uploading file ${file.originalname}:`, uploadError);
+                uploadErrors.push(file.originalname);
+            }
+        }
+
+        // Save project with all new attachments
         await project.save();
 
-        // Send notifications for new attachment
+        // Send notifications for new attachments
         try {
-            const newAttachment = project.attachments[project.attachments.length - 1];
+            if (uploadedAttachments.length > 0 && req.user?._id) {
+                const fileCount = uploadedAttachments.length;
+                const fileNames = uploadedAttachments.map(a => a.name).join(', ');
             
-            if (newAttachment && req.user?._id) {
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
                     recipientModel: 'Client',
                     category: 'project',
-                    subject: 'New Project Attachment',
-                    message: `A new file "${newAttachment.name}" has been uploaded to project "${project.title}"`,
+                    subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
+                    message: fileCount === 1 
+                        ? `A new file "${fileNames}" has been uploaded to project "${project.title}"`
+                        : `${fileCount} new files have been uploaded to project "${project.title}": ${fileNames}`,
                     metadata: {
                         projectId: project._id,
                         projectNumber: project.projectNumber,
-                        fileName: newAttachment.name,
+                        fileCount: fileCount,
+                        fileNames: uploadedAttachments.map(a => a.name),
                         uploadedBy: req.user._id
                     },
-                    io: req.app.get('io')
+                    io: (req.app as any).get('io')
                 });
             }
         } catch (notificationError) {
@@ -1249,17 +1271,28 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             // Don't fail the request if notification fails
         }
 
+        // Prepare response message
+        let message = "Attachment uploaded successfully";
+        if (uploadedAttachments.length > 1) {
+            message = `${uploadedAttachments.length} attachments uploaded successfully`;
+        }
+        if (uploadErrors.length > 0) {
+            message += `. ${uploadErrors.length} file(s) failed to upload: ${uploadErrors.join(', ')}`;
+        }
+
         res.status(201).json({
             success: true,
-            message: "Attachment uploaded successfully",
+            message: message,
             data: {
-                attachment: project.attachments[project.attachments.length - 1]
+                attachments: uploadedAttachments,
+                uploadedCount: uploadedAttachments.length,
+                failedCount: uploadErrors.length
             }
         });
 
     } catch (error: any) {
         console.error('Upload attachment error:', error);
-        next(errorHandler(500, "Server error while uploading attachment"));
+        next(errorHandler(500, "Server error while uploading attachments"));
     }
 };
 ```
@@ -1440,7 +1473,7 @@ PUT    /:projectId/milestones/:milestoneId  // Update milestone
 DELETE /:projectId/milestones/:milestoneId  // Delete milestone
 
 // Attachment Routes
-POST   /:projectId/attachments    // Upload attachment
+POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
 DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 
 // Query Routes
@@ -2013,25 +2046,86 @@ export default router;
 **URL Parameter:** `projectId` - The project ID
 
 **Body:** `multipart/form-data`
-- `file`: File to upload
+- `files`: Array of files to upload (maximum 10 files per request)
+- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
+- Maximum file size: 10MB per file
+
+**Note:** You can upload multiple files in a single request. The field name must be `files` (plural).
 
 **Response:**
 ```json
 {
   "success": true,
+  "message": "3 attachments uploaded successfully",
+  "data": {
+    "attachments": [
+      {
+        "name": "document.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "image.jpg",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "screenshot.png",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "uploadedCount": 3,
+    "failedCount": 0
+  }
+}
+```
+
+**Single File Upload Response:**
+```json
+{
+  "success": true,
   "message": "Attachment uploaded successfully",
   "data": {
-    "attachment": {
-      "_id": "...",
+    "attachments": [
+      {
       "name": "document.pdf",
       "url": "https://cloudinary.com/...",
-      "uploadedBy": {
-        "_id": "...",
-        "firstName": "Jane",
-        "lastName": "Smith"
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "uploadedCount": 1,
+    "failedCount": 0
+  }
+}
+```
+
+**Partial Failure Response:**
+```json
+{
+  "success": true,
+  "message": "2 attachments uploaded successfully. 1 file(s) failed to upload: large-file.pdf",
+  "data": {
+    "attachments": [
+      {
+        "name": "document1.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
       },
+      {
+        "name": "document2.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
       "uploadedAt": "2025-01-01T00:00:00.000Z"
     }
+    ],
+    "uploadedCount": 2,
+    "failedCount": 1
   }
 }
 ```
@@ -2100,12 +2194,23 @@ curl -X POST http://localhost:5000/api/projects/<projectId>/milestones \
   }'
 ```
 
-### Upload Attachment
+### Upload Attachment (Single File)
 ```bash
 curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
   -H "Authorization: Bearer <token>" \
-  -F "file=@/path/to/document.pdf"
+  -F "files=@/path/to/document.pdf"
 ```
+
+### Upload Multiple Attachments
+```bash
+curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
+  -H "Authorization: Bearer <token>" \
+  -F "files=@/path/to/document1.pdf" \
+  -F "files=@/path/to/image1.jpg" \
+  -F "files=@/path/to/screenshot.png"
+```
+
+**Note:** The field name must be `files` (plural) to upload multiple files. Maximum 10 files per request.
 
 ---
 

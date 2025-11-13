@@ -110,6 +110,8 @@ interface IClient {
   address?: string;
   city?: string;
   country?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   isActive: boolean;
   emailVerified: boolean;
   createdAt: Date;
@@ -124,6 +126,8 @@ interface IClient {
 - `phone` - Contact number
 - `company` - Business name (optional)
 - `address`, `city`, `country` - Location details
+- `avatar` - Profile picture URL (optional)
+- `avatarPublicId` - Cloudinary public ID for avatar (optional)
 - `isActive` - Account status
 - `emailVerified` - Email verification status
 - Timestamps
@@ -473,9 +477,11 @@ interface IContactMessage {
 ### 2. Client Controllers
 
 #### `clientController.ts`
+- `registerClient()` - Register new client with optional avatar upload
 - `getAllClients()` - Get all clients (admin)
 - `getClient()` - Get single client
-- `updateClient()` - Update client profile
+- `updateClientProfile()` - Update own profile with avatar support
+- `updateClient()` - Update client profile (admin) with avatar support
 - `deleteClient()` - Delete client (admin)
 - `getClientStats()` - Get client statistics
 - `getClientProjects()` - Get client's projects
@@ -563,7 +569,7 @@ interface IContactMessage {
 - `addMilestone()` - Add project milestone
 - `updateMilestone()` - Update milestone
 - `deleteMilestone()` - Delete milestone
-- `uploadAttachment()` - Upload project file
+- `uploadAttachment()` - Upload project files (supports multiple files, max 10 per request)
 - `deleteAttachment()` - Delete project file
 - `getClientProjects()` - Get client's projects
 - `getAssignedProjects()` - Get projects assigned to current user
@@ -675,7 +681,7 @@ GET    /me                        // Get current user profile
 ```typescript
 GET    /                          // Get all clients (admin)
 GET    /:id                       // Get single client
-PUT    /:id                       // Update client
+PUT    /:id                       // Update client (with avatar upload support)
 DELETE /:id                       // Delete client (admin)
 GET    /:id/stats                 // Get client stats
 GET    /:id/projects              // Get client projects
@@ -774,7 +780,7 @@ PATCH  /:projectId/progress       // Update progress
 POST   /:projectId/milestones     // Add milestone
 PATCH  /:projectId/milestones/:milestoneId  // Update milestone
 DELETE /:projectId/milestones/:milestoneId  // Delete milestone
-POST   /:projectId/attachments    // Upload attachment
+POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
 DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 ```
 
@@ -964,6 +970,8 @@ sire-api/
 
 #### File Upload
 - File upload is handled via `config/cloudinary.ts` with Cloudinary integration
+- **Project Attachments:** Supports multiple file uploads (max 10 files per request, 10MB per file)
+- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
 
 ---
 

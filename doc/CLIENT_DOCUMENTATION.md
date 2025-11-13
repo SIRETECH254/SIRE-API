@@ -50,6 +50,8 @@ interface IClient {
   address?: string;
   city?: string;
   country?: string;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
   isActive: boolean;
   emailVerified: boolean;
   // OTP Verification Fields
@@ -77,6 +79,7 @@ interface IClient {
 - **Password Security** - Min 6 characters, hidden by default, bcrypt hashing
 - **Company Information** - Optional business details
 - **Location Tracking** - Address, city, and country fields
+- **Avatar Support** - Profile picture with Cloudinary integration
 - **Account Status** - Active/inactive toggle
 - **Email Verification** - OTP-based verification system
 - **Password Reset** - Secure token-based reset with expiration
@@ -263,9 +266,10 @@ import { createInAppNotification } from '../utils/notificationHelper';
 **Process:**
 - Generate and hash password
 - Create OTP code with expiry
+- Handle optional avatar upload (if provided via multipart/form-data)
 - Send OTP via email and SMS
 - Set client as unverified initially
-**Response:** Client data without password, verification status
+**Response:** Client data without password, verification status, including avatar if uploaded
 
 **Controller Implementation:**
 ```typescript
@@ -282,6 +286,21 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
             city?: string;
             country?: string;
         } = req.body;
+
+        // Handle optional avatar upload if provided
+        let avatarUrl: string | null = null;
+        let avatarPublicId: string | null = null;
+        
+        if (req.file) {
+            try {
+                const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+                avatarUrl = uploadResult.url;
+                avatarPublicId = uploadResult.public_id;
+            } catch (uploadError) {
+                console.error('Avatar upload error during registration:', uploadError);
+                // Continue with registration even if avatar upload fails
+            }
+        }
 
         // Validation
         if (!firstName || !lastName || !email || !phone || !password) {
@@ -326,6 +345,8 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
             address,
             city,
             country,
+            avatar: avatarUrl,
+            avatarPublicId: avatarPublicId,
             otpCode: otp,
             otpExpiry,
             emailVerified: false
@@ -347,6 +368,7 @@ export const registerClient = async (req: Request, res: Response, next: NextFunc
                 email: client.email,
                 phone: client.phone,
                 company: client.company,
+                avatar: client.avatar,
                 emailVerified: client.emailVerified
             }
         });
@@ -718,6 +740,7 @@ export const getClient = async (req: Request, res: Response, next: NextFunction)
 **Access:** Client themselves or Admin users
 **Allowed Fields:**
 - firstName, lastName, phone, company, address, city, country
+- avatar (can be uploaded via multipart/form-data, provided as URL, or removed by setting to null)
 - Notification preferences
 **Restrictions:** Cannot change email or verification status (except by admin)
 
@@ -726,7 +749,7 @@ export const getClient = async (req: Request, res: Response, next: NextFunction)
 export const updateClient = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { clientId } = req.params;
-        const { firstName, lastName, phone, company, address, city, country }: {
+        const { firstName, lastName, phone, company, address, city, country, avatar }: {
             firstName?: string;
             lastName?: string;
             phone?: string;
@@ -734,6 +757,7 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
             address?: string;
             city?: string;
             country?: string;
+            avatar?: string | null;
         } = req.body;
 
         const client = await Client.findById(clientId);
@@ -751,6 +775,40 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
         if (city) client.city = city;
         if (country) client.country = country;
 
+        // Handle avatar upload via multipart/form-data
+        if (req.file) {
+            const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/avatars');
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+            client.avatar = uploadResult.url;
+            client.avatarPublicId = uploadResult.public_id;
+        } else if (avatar === null || (typeof avatar === 'string' && avatar.trim().length === 0)) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+            client.avatar = null;
+            client.avatarPublicId = null;
+        } else if (typeof avatar === 'string' && avatar.trim().length > 0) {
+            if (client.avatarPublicId) {
+                try {
+                    await deleteFromCloudinary(client.avatarPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to delete previous avatar:', deleteError);
+                }
+            }
+            client.avatar = avatar.trim();
+            client.avatarPublicId = null;
+        }
+
         await client.save();
 
         res.status(200).json({
@@ -766,7 +824,8 @@ export const updateClient = async (req: Request, res: Response, next: NextFuncti
                     company: client.company,
                     address: client.address,
                     city: client.city,
-                    country: client.country
+                    country: client.country,
+                    avatar: client.avatar
                 }
             }
         });
@@ -1031,6 +1090,7 @@ import {
     getClientQuotations
 } from '../controllers/clientController';
 import { authenticateToken, authorizeRoles, requireOwnershipOrAdmin } from '../middleware/auth';
+import { uploadUserAvatar } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -1088,7 +1148,7 @@ router.get('/profile', authenticateToken, getClientProfile);
  * @desc    Update own profile
  * @access  Private (Client)
  */
-router.put('/profile', authenticateToken, updateClientProfile);
+router.put('/profile', authenticateToken, uploadUserAvatar.single('avatar'), updateClientProfile);
 
 /**
  * @route   PUT /api/clients/change-password
@@ -1123,7 +1183,7 @@ router.get('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'),
  * @desc    Update client (admin)
  * @access  Private (Client or Admin)
  */
-router.put('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'), updateClient);
+router.put('/:clientId', authenticateToken, requireOwnershipOrAdmin('clientId'), uploadUserAvatar.single('avatar'), updateClient);
 
 /**
  * @route   DELETE /api/clients/:clientId
@@ -1442,6 +1502,19 @@ curl -X GET http://localhost:5000/api/clients/dashboard \
 
 #### 5. Update Client Profile
 ```bash
+# Update profile with avatar upload
+curl -X PUT http://localhost:5000/api/clients/profile \
+  -H "Authorization: Bearer <client_access_token>" \
+  -F "firstName=Jane" \
+  -F "lastName=Smith-Johnson" \
+  -F "phone=+254712345679" \
+  -F "company=Tech Solutions International" \
+  -F "city=Mombasa" \
+  -F "avatar=@/path/to/profile-photo.jpg;type=image/jpeg"
+```
+
+```bash
+# Update profile with JSON (using existing avatar URL)
 curl -X PUT http://localhost:5000/api/clients/profile \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <client_access_token>" \
@@ -1450,7 +1523,18 @@ curl -X PUT http://localhost:5000/api/clients/profile \
     "lastName": "Smith-Johnson",
     "phone": "+254712345679",
     "company": "Tech Solutions International",
-    "city": "Mombasa"
+    "city": "Mombasa",
+    "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
+  }'
+```
+
+```bash
+# Remove avatar
+curl -X PUT http://localhost:5000/api/clients/profile \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <client_access_token>" \
+  -d '{
+    "avatar": null
   }'
 ```
 
@@ -1466,7 +1550,33 @@ curl -X GET "http://localhost:5000/api/clients?page=1&limit=10&search=tech&statu
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
-#### 8. Admin: Update Client Status
+#### 8. Admin: Update Client (with avatar)
+```bash
+# Admin update client with avatar upload
+curl -X PUT http://localhost:5000/api/clients/<clientId> \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -F "firstName=Jane" \
+  -F "lastName=Smith" \
+  -F "phone=+254712345679" \
+  -F "company=Tech Solutions International" \
+  -F "avatar=@/path/to/profile-photo.jpg;type=image/jpeg"
+```
+
+```bash
+# Admin update client with JSON
+curl -X PUT http://localhost:5000/api/clients/<clientId> \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin_access_token>" \
+  -d '{
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "phone": "+254712345679",
+    "company": "Tech Solutions International",
+    "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
+  }'
+```
+
+#### 9. Admin: Update Client Status
 ```bash
 curl -X PUT http://localhost:5000/api/clients/<clientId>/status \
   -H "Content-Type: application/json" \
