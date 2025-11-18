@@ -602,12 +602,16 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
             return next(errorHandler(502, result.error || "Failed to query M-Pesa status"));
         }
 
+        // Convert resultCode to string to ensure consistency
+        const resultCode = String(result.resultCode ?? '');
+        const resultDesc = String(result.resultDesc ?? '');
+
         console.log('===== SAFARICOM QUERY RESULT =====');
-        console.log('Result Code:', result.resultCode);
-        console.log('Result Desc:', result.resultDesc);
+        console.log('Result Code:', resultCode);
+        console.log('Result Desc:', resultDesc);
         console.log('==================================');
         
-        if (result.resultCode === 0 && payment.status !== 'completed') {
+        if (resultCode === '0' && payment.status !== 'completed') {
             const invoice = await Invoice.findById(payment.invoice);
             if (invoice) {
                 await applySuccessfulPayment({ 
@@ -617,7 +621,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
                     method: 'mpesa' 
                 });
             }
-        } else if (result.resultCode !== 0 && payment.status !== 'failed') {
+
+            console.log("paymentstatus", payment.status)
+            
+        } else if (resultCode !== '0' && payment.status !== 'failed') {
             payment.status = 'failed';
             await payment.save();
             req.app.get('io')?.emit('payment.updated', { 
@@ -629,10 +636,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         res.status(200).json({ 
             success: true, 
             data: { 
-                resultCode: result.resultCode, 
-                resultDesc: result.resultDesc,
-                paymentId: payment._id,
-                invoiceId: payment.invoice,
+                resultCode: resultCode, 
+                resultDesc: resultDesc,
+                paymentId: payment._id.toString(),
+                invoiceId: payment.invoice.toString(),
                 raw: result.raw
             } 
         });
