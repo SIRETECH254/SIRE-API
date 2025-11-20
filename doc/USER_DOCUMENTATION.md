@@ -19,7 +19,7 @@
 
 ## User Management Overview
 
-User Management covers internal admin users who operate the system. Users authenticate via JWT and are assigned one of four roles: `super_admin`, `finance`, `project_manager`, `staff`. Role-based access control (RBAC) governs permissions for administration tasks.
+User Management covers all users in the unified system (including former clients). All users authenticate via JWT and are assigned roles from the Role model. Users can have multiple roles assigned. Role-based access control (RBAC) governs permissions throughout the system. The default role for new registrations is "client".
 
 ---
 
@@ -33,8 +33,12 @@ interface IUser {
   lastName: string;
   email: string;
   password: string;                 // hashed, select: false by default
-  role: 'super_admin' | 'finance' | 'project_manager' | 'staff';
-  phone?: string;
+  roles: ObjectId[];                // Array of Role references
+  phone: string;                    // Required field
+  company?: string;                  // Client company name
+  address?: string;                  // Client address
+  city?: string;                    // Client city
+  country?: string;                  // Client country
   isActive: boolean;                // soft-disable account
   emailVerified: boolean;           // verified via OTP in Auth flow
   avatar?: string;
@@ -56,6 +60,7 @@ interface IUser {
   createdAt: Date;
   updatedAt: Date;
   fullName?: string;                // virtual
+  primaryRole?: IRole;              // virtual (first role in array)
 }
 ```
 
@@ -65,8 +70,12 @@ firstName: { required: true, maxlength: 50 }
 lastName:  { required: true, maxlength: 50 }
 email:     { required: true, unique: true, format: email }
 password:  { required: true, minlength: 6, select: false }
-role:      { enum: ['super_admin','finance','project_manager','staff'], default: 'staff' }
-phone:     { optional, unique: true }
+roles:     { type: Array, ref: 'Role' }
+phone:     { required: true, unique: true }
+company:   { optional, maxlength: 100 }
+address:   { optional, maxlength: 200 }
+city:      { optional, maxlength: 50 }
+country:   { optional, maxlength: 50 }
 isActive:  { default: true }
 emailVerified: { default: false }
 ```
@@ -75,8 +84,9 @@ emailVerified: { default: false }
 ```typescript
 // Common indexes
 userSchema.index({ email: 1 });
-userSchema.index({ role: 1 });
+userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ company: 1 });
 userSchema.index({ email: 1, isActive: 1 });
 ```
 
@@ -92,24 +102,28 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import Role from '../models/Role';
 import { createInAppNotification } from '../utils/notificationHelper';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 ```
 
 ### Functions Overview
-- `getUserProfile()` - Get current user profile
+- `getUserProfile()` - Get current user profile (with roles populated)
 - `updateUserProfile()` - Update own profile
 - `changePassword()` - Change password
 - `getNotificationPreferences()` - Get notification preferences
 - `updateNotificationPreferences()` - Update notification preferences
-- `getAllUsers()` - Get all users (admin)
-- `getUserById()` - Get single user (admin)
+- `getAllUsers()` - Get all users (admin) with role filtering
+- `getUserById()` - Get single user (admin) with roles populated
 - `updateUser()` - Update any user (admin)
 - `updateUserStatus()` - Update user status (super admin)
-- `setUserAdmin()` - Set user admin role (super admin)
-- `getUserRoles()` - Get user roles (admin)
+- `setUserAdmin()` - Set user admin role (super admin) - DEPRECATED: Use assignRole instead
+- `getUserRoles()` - Get user roles (admin) with roles populated
 - `deleteUser()` - Delete user (super admin)
-- `adminCreateCustomer()` - Admin creates a customer
+- `adminCreateCustomer()` - Admin creates a customer (assigns default "client" role)
+- `assignRole()` - Assign role to user (super admin)
+- `removeRole()` - Remove role from user (super admin)
+- `getClients()` - Get clients (users with client role) (admin)
 
 ### getUserProfile
 **Route:** GET `/api/users/profile`  |  **Access:** Private
@@ -639,6 +653,27 @@ router.get('/:userId/roles', authenticateToken, authorizeRoles(['super_admin', '
  */
 router.delete('/:userId', authenticateToken, requireAdmin, deleteUser);
 
+/**
+ * @route   POST /api/users/:userId/roles
+ * @desc    Assign role to user
+ * @access  Private (Super Admin only)
+ */
+router.post('/:userId/roles', authenticateToken, requireAdmin, assignRole);
+
+/**
+ * @route   DELETE /api/users/:userId/roles/:roleId
+ * @desc    Remove role from user
+ * @access  Private (Super Admin only)
+ */
+router.delete('/:userId/roles/:roleId', authenticateToken, requireAdmin, removeRole);
+
+/**
+ * @route   GET /api/users/clients
+ * @desc    Get clients (users with client role)
+ * @access  Private (Admin)
+ */
+router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
+
 export default router;
 ```
 
@@ -668,10 +703,25 @@ Update any user's profile information (admin only). Allows updating firstName, l
 Toggle user active status (super admin only).
 
 #### `PUT /api/users/:userId/admin`
-Set user role (super admin only).
+Set user role (super admin only). **DEPRECATED:** Use `POST /api/users/:userId/roles` instead.
 
 #### `GET /api/users/:userId/roles`
-Get user roles.
+Get user roles with full role details populated.
+
+#### `POST /api/users/:userId/roles`
+Assign role to user (super admin only).
+**Body:**
+```json
+{
+  "roleName": "finance"
+}
+```
+
+#### `DELETE /api/users/:userId/roles/:roleId`
+Remove role from user (super admin only).
+
+#### `GET /api/users/clients`
+Get clients (users with client role) with pagination and filtering (admin only).
 
 #### `DELETE /api/users/:userId`
 Delete user (super admin only).

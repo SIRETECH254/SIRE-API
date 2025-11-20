@@ -11,9 +11,10 @@ const notificationSchema = new Schema<INotification>({
     type: String,
     required: [true, 'Recipient model is required'],
     enum: {
-      values: ['User', 'Client'],
-      message: 'Recipient model must be User or Client'
-    }
+      values: ['User'],
+      message: 'Recipient model must be User'
+    },
+    default: 'User'
   },
   type: {
     type: String,

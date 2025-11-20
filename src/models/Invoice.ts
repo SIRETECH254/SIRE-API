@@ -10,7 +10,7 @@ const invoiceSchema = new Schema<IInvoice>({
   },
   client: {
     type: Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   quotation: {

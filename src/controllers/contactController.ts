@@ -3,7 +3,7 @@ import validator from 'validator';
 import { errorHandler } from '../middleware/errorHandler';
 import ContactMessage from '../models/ContactMessage';
 import User from '../models/User';
-import Client from '../models/Client';
+import Role from '../models/Role';
 import { sendContactFormNotification, sendContactReplyEmail } from '../services/external/emailService';
 import { createInAppNotification } from '../utils/notificationHelper';
 
@@ -283,24 +283,31 @@ export const replyToMessage = async (req: Request, res: Response, next: NextFunc
             // Don't fail the request if email fails
         }
 
-        // Send in-app notification to sender if they are a registered client
+        // Send in-app notification to sender if they are a registered user with client role
         try {
-            const client = await Client.findOne({ email: message.email });
-
-            if (client) {
-                await createInAppNotification({
-                    recipient: client._id.toString(),
-                    recipientModel: 'Client',
-                    category: 'general',
-                    subject: 'Contact Message Replied',
-                    message: `Your contact message "${message.subject}" has been replied to. Check your email for the reply.`,
-                    metadata: {
-                        contactMessageId: message._id,
-                        subject: message.subject,
-                        reply: reply
-                    },
-                    io: (req.app as any).get('io')
+            // Find user with client role by email
+            const clientRole = await Role.findOne({ name: 'client' });
+            if (clientRole) {
+                const client = await User.findOne({ 
+                    email: message.email,
+                    roles: clientRole._id
                 });
+
+                if (client) {
+                    await createInAppNotification({
+                        recipient: client._id.toString(),
+                        recipientModel: 'User',
+                        category: 'general',
+                        subject: 'Contact Message Replied',
+                        message: `Your contact message "${message.subject}" has been replied to. Check your email for the reply.`,
+                        metadata: {
+                            contactMessageId: message._id,
+                            subject: message.subject,
+                            reply: reply
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
             }
         } catch (notificationError) {
             console.error('Error sending notification:', notificationError);

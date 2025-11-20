@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Quotation from '../models/Quotation';
-import Client from '../models/Client';
+import User from '../models/User';
+import Role from '../models/Role';
 import Invoice from '../models/Invoice';
 import Project from '../models/Project';
 import { generateQuotationPDF } from '../utils/generatePDF';
@@ -114,7 +115,7 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         try {
             await createInAppNotification({
                 recipient: quotation.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'quotation',
                 subject: 'New Quotation Created',
                 message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
@@ -467,7 +468,7 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
             // For Client
             await createInAppNotification({
                 recipient: invoice.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'invoice',
                 subject: 'Invoice Created from Quotation',
                 message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
@@ -684,7 +685,7 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         try {
             await createInAppNotification({
                 recipient: quotation.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'quotation',
                 subject: 'Quotation Sent',
                 message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,

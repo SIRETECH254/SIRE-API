@@ -4,7 +4,7 @@ import type { ITestimonial } from '../types/index';
 const testimonialSchema = new Schema<ITestimonial>({
   client: {
     type: Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   project: {

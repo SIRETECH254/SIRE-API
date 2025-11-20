@@ -15,7 +15,7 @@ const paymentSchema = new Schema({
   },
   client: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   amount: {

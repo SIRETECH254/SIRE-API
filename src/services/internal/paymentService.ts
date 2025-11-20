@@ -1,6 +1,6 @@
 import Payment from '../../models/Payment';
 import Invoice from '../../models/Invoice';
-import Client from '../../models/Client';
+import User from '../../models/User';
 import { initiateStkPush } from '../external/darajaService';
 import { initTransaction } from '../external/paystackService';
 import { createInAppNotification } from '../../utils/notificationHelper';
@@ -74,7 +74,7 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
 
   // Update client if exists
   if (payment.client) {
-    const client = await Client.findById(payment.client);
+    const client = await User.findById(payment.client);
     if (client) {
       // Update client's last payment date or any other relevant fields
       (client as any).lastPaymentAt = new Date();
@@ -100,7 +100,7 @@ export const applySuccessfulPayment = async (params: ApplySuccessfulPaymentParam
   try {
     await createInAppNotification({
       recipient: payment.client.toString(),
-      recipientModel: 'Client',
+      recipientModel: 'User',
       category: 'payment',
       subject: 'Payment Successful',
       message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} has been received successfully. Transaction ID: ${payment.transactionId || 'N/A'}`,

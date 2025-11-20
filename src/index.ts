@@ -9,7 +9,7 @@ import swaggerConfig from './config/swagger.js';
 // Import Routes
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
-import clientRoutes from './routes/clientRoutes';
+import roleRoutes from './routes/roleRoutes';
 import projectRoutes from './routes/projectRoutes';
 import serviceRoutes from './routes/serviceRoutes';
 import quotationRoutes from './routes/quotationRoutes';
@@ -73,7 +73,7 @@ app.use("/api/auth", authRoutes);
 
 app.use("/api/users", userRoutes);
 
-app.use("/api/clients", clientRoutes);
+app.use("/api/roles", roleRoutes);
 
 app.use("/api/projects", projectRoutes);
 
@@ -190,7 +190,7 @@ app.get('/api', (req: express.Request, res: express.Response) => {
     version: '1.0.0',
     documentation: '/api/docs',
     features: [
-      'User & Client Management',
+      'Unified User Management',
       'Service Catalog',
       'Quotation & Invoice Generation',
       'Payment Processing (M-Pesa, Stripe, PayPal)',
@@ -203,7 +203,6 @@ app.get('/api', (req: express.Request, res: express.Response) => {
     endpoints: {
       auth: '/api/auth',
       users: '/api/users',
-      clients: '/api/clients',
       projects: '/api/projects',
       services: '/api/services',
       quotations: '/api/quotations',

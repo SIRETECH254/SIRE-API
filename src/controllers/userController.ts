@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import Role from '../models/Role';
 import { createInAppNotification } from '../utils/notificationHelper';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 
@@ -11,7 +13,8 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const user = await User.findById(req.user?._id)
-            .select('-password -otpCode -resetPasswordToken');
+            .select('-password -otpCode -resetPasswordToken')
+            .populate('roles', 'name displayName description permissions');
 
         if (!user) {
             return next(errorHandler(404, "User not found"));
@@ -27,7 +30,11 @@ export const getUserProfile = async (req: Request, res: Response, next: NextFunc
                     email: user.email,
                     phone: user.phone,
                     avatar: user.avatar,
-                    role: user.role,
+                    roles: user.roles,
+                    company: user.company,
+                    address: user.address,
+                    city: user.city,
+                    country: user.country,
                     isActive: user.isActive,
                     emailVerified: user.emailVerified,
                     lastLoginAt: user.lastLoginAt,
@@ -259,9 +266,12 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
             ];
         }
 
-        // Filter by role
+        // Filter by role (find users with specific role)
         if (role) {
-            query.role = role;
+            const roleDoc = await Role.findOne({ name: role.toString().toLowerCase() });
+            if (roleDoc) {
+                query.roles = roleDoc._id;
+            }
         }
 
         // Filter by status
@@ -285,6 +295,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
 
         const users = await User.find(query)
             .select(options.select)
+            .populate('roles', 'name displayName')
             .sort({ createdAt: 'desc' })
             .limit(options.limit * 1)
             .skip((options.page - 1) * options.limit);
@@ -318,7 +329,9 @@ export const getUserById = async (req: Request, res: Response, next: NextFunctio
     try {
         const { userId } = req.params;
 
-        const user = await User.findById(userId).select('-password -otpCode -resetPasswordToken');
+        const user = await User.findById(userId)
+            .select('-password -otpCode -resetPasswordToken')
+            .populate('roles', 'name displayName description permissions');
 
         if (!user) {
             return next(errorHandler(404, "User not found"));
@@ -425,6 +438,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
         }
 
         await user.save();
+        await user.populate('roles', 'name displayName');
 
         res.status(200).json({
             success: true,
@@ -437,7 +451,7 @@ export const updateUser = async (req: Request, res: Response, next: NextFunction
                     email: user.email,
                     phone: user.phone,
                     avatar: user.avatar,
-                    role: user.role,
+                    roles: user.roles,
                     isActive: user.isActive
                 }
             }
@@ -489,6 +503,8 @@ export const updateUserStatus = async (req: Request, res: Response, next: NextFu
             }
         }
 
+        await user.populate('roles', 'name displayName');
+
         res.status(200).json({
             success: true,
             message: "User status updated successfully",
@@ -499,7 +515,7 @@ export const updateUserStatus = async (req: Request, res: Response, next: NextFu
                     lastName: user.lastName,
                     email: user.email,
                     isActive: user.isActive,
-                    role: user.role
+                    roles: user.roles
                 }
             }
         });
@@ -510,13 +526,17 @@ export const updateUserStatus = async (req: Request, res: Response, next: NextFu
     }
 };
 
-// @desc    Set user as admin (Admin only)
+// @desc    Set user as admin (Admin only) - DEPRECATED: Use assignRole/removeRole instead
 // @route   PUT /api/users/:userId/admin
 // @access  Private (Admin)
 export const setUserAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { userId } = req.params;
-        const { role }: { role: 'super_admin' | 'finance' | 'project_manager' | 'staff' } = req.body;
+        const { roleName }: { roleName: string } = req.body;
+
+        if (!roleName) {
+            return next(errorHandler(400, "Role name is required"));
+        }
 
         const user = await User.findById(userId);
 
@@ -524,25 +544,32 @@ export const setUserAdmin = async (req: Request, res: Response, next: NextFuncti
             return next(errorHandler(404, "User not found"));
         }
 
-        // Validate role
-        const validRoles = ['super_admin', 'finance', 'project_manager', 'staff'];
-        if (!validRoles.includes(role)) {
-            return next(errorHandler(400, "Invalid role"));
+        // Find role by name
+        const role = await Role.findOne({ name: roleName.toLowerCase() });
+        if (!role) {
+            return next(errorHandler(404, "Role not found"));
         }
 
-        user.role = role;
-        await user.save();
+        // Replace all roles with the new role (or add if not present)
+        const roleId = typeof role._id === 'string' ? new mongoose.Types.ObjectId(role._id) : role._id;
+        const hasRole = user.roles.some((r: any) => r.toString() === roleId.toString());
+        if (!hasRole) {
+            user.roles = [roleId]; // Replace all roles with the new one
+            await user.save();
+        }
+
+        await user.populate('roles', 'name displayName');
 
         res.status(200).json({
             success: true,
-            message: `User role updated to ${role} successfully`,
+            message: `User role updated to ${roleName} successfully`,
             data: {
                 user: {
                     id: user._id,
                     firstName: user.firstName,
                     lastName: user.lastName,
                     email: user.email,
-                    role: user.role
+                    roles: user.roles
                 }
             }
         });
@@ -560,7 +587,8 @@ export const getUserRoles = async (req: Request, res: Response, next: NextFuncti
     try {
         const { userId } = req.params;
 
-        const user = await User.findById(userId);
+        const user = await User.findById(userId)
+            .populate('roles', 'name displayName description permissions');
 
         if (!user) {
             return next(errorHandler(404, "User not found"));
@@ -574,7 +602,7 @@ export const getUserRoles = async (req: Request, res: Response, next: NextFuncti
                     firstName: user.firstName,
                     lastName: user.lastName,
                     email: user.email,
-                    role: user.role
+                    roles: user.roles
                 }
             }
         });
@@ -621,12 +649,16 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
 // @access  Private (Admin)
 export const adminCreateCustomer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { firstName, lastName, email, phone, role }: {
+        const { firstName, lastName, email, phone, roleNames, company, address, city, country }: {
             firstName: string;
             lastName: string;
             email: string;
             phone: string;
-            role?: 'super_admin' | 'finance' | 'project_manager' | 'staff';
+            roleNames?: string[];
+            company?: string;
+            address?: string;
+            city?: string;
+            country?: string;
         } = req.body;
 
         if (!firstName || !lastName || !email || !phone) {
@@ -640,6 +672,23 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
             return next(errorHandler(400, `A user with this ${field} already exists`));
         }
 
+        // Get roles by names (default to 'client' if not specified)
+        let assignedRoles: any[] = [];
+        if (roleNames && roleNames.length > 0) {
+            const roles = await Role.find({ name: { $in: roleNames.map(r => r.toLowerCase()) } });
+            if (roles.length !== roleNames.length) {
+                return next(errorHandler(400, "One or more specified roles not found"));
+            }
+            assignedRoles = roles.map(r => r._id);
+        } else {
+            // Default to client role
+            const clientRole = await Role.findOne({ name: 'client' });
+            if (!clientRole) {
+                return next(errorHandler(500, "Default client role not found. Please run migration script first."));
+            }
+            assignedRoles = [clientRole._id];
+        }
+
         // Derive password from phone and hash
         const passwordHash: string = bcrypt.hashSync(String(phone), 12);
 
@@ -650,10 +699,16 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
             email: email.toLowerCase(),
             phone,
             password: passwordHash,
-            role: role || 'staff',
+            roles: assignedRoles,
+            company,
+            address,
+            city,
+            country,
             isActive: true,
             emailVerified: false,
         });
+
+        await user.populate('roles', 'name displayName');
 
         res.status(201).json({
             success: true,
@@ -665,7 +720,11 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
                     lastName: user.lastName,
                     email: user.email,
                     phone: user.phone,
-                    role: user.role,
+                    roles: user.roles,
+                    company: user.company,
+                    address: user.address,
+                    city: user.city,
+                    country: user.country,
                     isActive: user.isActive,
                     emailVerified: user.emailVerified,
                     createdAt: user.createdAt,
@@ -676,5 +735,176 @@ export const adminCreateCustomer = async (req: Request, res: Response, next: Nex
     } catch (error: any) {
         console.error('Admin create customer error:', error);
         next(errorHandler(500, "Server error while creating customer"));
+    }
+};
+
+// @desc    Assign role to user
+// @route   POST /api/users/:userId/roles
+// @access  Private (Super Admin only)
+export const assignRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { userId } = req.params;
+        const { roleName }: { roleName: string } = req.body;
+
+        if (!roleName) {
+            return next(errorHandler(400, "Role name is required"));
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return next(errorHandler(404, "User not found"));
+        }
+
+        const role = await Role.findOne({ name: roleName.toLowerCase() });
+        if (!role) {
+            return next(errorHandler(404, "Role not found"));
+        }
+
+        // Check if user already has this role
+        const roleId = typeof role._id === 'string' ? new mongoose.Types.ObjectId(role._id) : role._id;
+        const hasRole = user.roles.some((r: any) => r.toString() === roleId.toString());
+        if (hasRole) {
+            return next(errorHandler(400, "User already has this role"));
+        }
+
+        user.roles.push(roleId);
+        await user.save();
+
+        await user.populate('roles', 'name displayName');
+
+        res.status(200).json({
+            success: true,
+            message: "Role assigned successfully",
+            data: {
+                user: {
+                    id: user._id,
+                    roles: user.roles
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Assign role error:', error);
+        next(errorHandler(500, "Server error while assigning role"));
+    }
+};
+
+// @desc    Remove role from user
+// @route   DELETE /api/users/:userId/roles/:roleId
+// @access  Private (Super Admin only)
+export const removeRole = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { userId, roleId } = req.params;
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return next(errorHandler(404, "User not found"));
+        }
+
+        const role = await Role.findById(roleId);
+        if (!role) {
+            return next(errorHandler(404, "Role not found"));
+        }
+
+        // Check if role is system role and user only has this role
+        if (role.isSystemRole && user.roles.length === 1) {
+            return next(errorHandler(400, "Cannot remove the only role from user. Users must have at least one role."));
+        }
+
+        // Remove role
+        user.roles = user.roles.filter((r: any) => r.toString() !== roleId);
+        await user.save();
+
+        await user.populate('roles', 'name displayName');
+
+        res.status(200).json({
+            success: true,
+            message: "Role removed successfully",
+            data: {
+                user: {
+                    id: user._id,
+                    roles: user.roles
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Remove role error:', error);
+        next(errorHandler(500, "Server error while removing role"));
+    }
+};
+
+// @desc    Get clients (users with client role)
+// @route   GET /api/users/clients
+// @access  Private (Admin)
+export const getClients = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { page = 1, limit = 10, search, status } = req.query;
+
+        // Find client role
+        const clientRole = await Role.findOne({ name: 'client' });
+
+        if (!clientRole) {
+            return next(errorHandler(404, "Client role not found. Please run migration script first."));
+        }
+
+        const query: any = {
+            roles: clientRole._id
+        };
+
+        // Search by name, email, or company
+        if (search) {
+            query.$or = [
+                { firstName: { $regex: search, $options: 'i' } },
+                { lastName: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { company: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        // Filter by status
+        if (status === 'active') {
+            query.isActive = true;
+        } else if (status === 'inactive') {
+            query.isActive = false;
+        }
+
+        if (status === 'verified') {
+            query.emailVerified = true;
+        } else if (status === 'unverified') {
+            query.emailVerified = false;
+        }
+
+        const options = {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string)
+        };
+
+        const clients = await User.find(query)
+            .select('-password -otpCode -resetPasswordToken')
+            .populate('roles', 'name displayName')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await User.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                clients,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalClients: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get clients error:', error);
+        next(errorHandler(500, "Server error while fetching clients"));
     }
 };

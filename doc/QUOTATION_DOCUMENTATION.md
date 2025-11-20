@@ -47,7 +47,7 @@ interface IQuotation {
   _id: string;
   quotationNumber: string;       // Auto-generated (QT-2025-0001)
   project: ObjectId;              // Reference to Project (required)
-  client: ObjectId;              // Reference to Client (inherited from project)
+  client: ObjectId;              // Reference to User (inherited from project)
   items: Array<{
     description: string;         // Item description
     quantity: number;
@@ -91,7 +91,7 @@ interface IQuotation {
 // Required fields
 quotationNumber: { required: true, unique: true }
 project: { required: true, ref: 'Project' }  // Project reference is required
-client: { required: true, ref: 'Client' }    // Inherited from project
+client: { required: true, ref: 'User' }    // Inherited from project
 items: { required: true, minlength: 1 }
 subtotal: { required: true, min: 0 }
 tax: { required: true, min: 0 }
@@ -347,7 +347,7 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         try {
             await createInAppNotification({
                 recipient: quotation.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'quotation',
                 subject: 'New Quotation Created',
                 message: `A new quotation ${quotation.quotationNumber} has been created for your project.`,
@@ -841,7 +841,7 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
             // For Client
             await createInAppNotification({
                 recipient: invoice.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'invoice',
                 subject: 'Invoice Created from Quotation',
                 message: `Your accepted quotation ${quotation.quotationNumber} has been converted to invoice ${invoice.invoiceNumber}. Payment is now due.`,
@@ -1084,7 +1084,7 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
         try {
             await createInAppNotification({
                 recipient: quotation.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'quotation',
                 subject: 'Quotation Sent',
                 message: `Quotation ${quotation.quotationNumber} has been sent to your email. Please review and respond.`,

@@ -51,7 +51,7 @@ interface IPayment {
   _id: string;
   paymentNumber: string;         // Auto-generated (PAY-2025-0001)
   invoice: ObjectId;             // Reference to Invoice
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   amount: number;                // Payment amount
   paymentMethod: 'mpesa' | 'paystack';
   status: 'pending' | 'completed' | 'failed';
@@ -92,7 +92,7 @@ interface IPayment {
 // Required fields
 paymentNumber: { required: true, unique: true }
 invoice: { required: true, ref: 'Invoice' }
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 amount: { required: true, min: 0 }
 paymentMethod: { required: true, enum: ['mpesa', 'paystack'] }
 status: { required: true, enum: ['pending', 'completed', 'failed'] }
@@ -280,7 +280,7 @@ export const createPaymentAdmin = async (req: Request, res: Response, next: Next
             return next(errorHandler(400, "Invalid payment amount"));
         }
 
-        const client = await Client.findById(invoice.client);
+        const client = await User.findById(invoice.client);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -425,7 +425,7 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
         }
 
         // Get client information
-        const client = await Client.findById(invoice.client);
+        const client = await User.findById(invoice.client);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -783,7 +783,7 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
                 if (invoice) {
                     await createInAppNotification({
                         recipient: payment.client.toString(),
-                        recipientModel: 'Client',
+                        recipientModel: 'User',
                         category: 'payment',
                         subject: 'Payment Failed',
                         message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
@@ -894,7 +894,7 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
                 if (invoice) {
                     await createInAppNotification({
                         recipient: payment.client.toString(),
-                        recipientModel: 'Client',
+                        recipientModel: 'User',
                         category: 'payment',
                         subject: 'Payment Failed',
                         message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,

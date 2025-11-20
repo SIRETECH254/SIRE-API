@@ -48,7 +48,7 @@ The SIRE Tech API Invoice Management System handles all invoice-related operatio
 interface IInvoice {
   _id: string;
   invoiceNumber: string;         // Auto-generated (INV-2025-0001)
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   quotation?: ObjectId;          // Reference to Quotation (if converted)
   projectTitle: string;
   items: Array<{
@@ -89,7 +89,7 @@ interface IInvoice {
 ```typescript
 // Required fields
 invoiceNumber: { required: true, unique: true }
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 projectTitle: { required: true, maxlength: 200 }
 items: { required: true, minlength: 1 }
 subtotal: { required: true, min: 0 }
@@ -410,7 +410,7 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
         try {
             await createInAppNotification({
                 recipient: invoice.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'invoice',
                 subject: 'New Invoice Created',
                 message: `A new invoice ${invoice.invoiceNumber} has been created. Amount: $${invoice.totalAmount.toFixed(2)}`,
@@ -715,7 +715,7 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
         try {
             await createInAppNotification({
                 recipient: invoice.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'payment',
                 subject: 'Invoice Paid',
                 message: `Invoice ${invoice.invoiceNumber} has been marked as paid. Thank you for your payment!`,
@@ -781,7 +781,7 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
         try {
             await createInAppNotification({
                 recipient: invoice.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'invoice',
                 subject: 'Invoice Overdue',
                 message: `Invoice ${invoice.invoiceNumber} is now overdue. Please make payment as soon as possible.`,
@@ -886,7 +886,7 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
             try {
                 await createInAppNotification({
                     recipient: invoice.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'invoice',
                     subject: 'Invoice Cancelled',
                     message: `Invoice ${invoice.invoiceNumber} has been cancelled. Reason: ${reason || 'No reason provided'}`,
@@ -1119,7 +1119,7 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
         try {
             await createInAppNotification({
                 recipient: invoice.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'invoice',
                 subject: 'Invoice Sent',
                 message: `Invoice ${invoice.invoiceNumber} has been sent to your email. Please make payment by ${new Date(invoice.dueDate).toLocaleDateString()}.`,

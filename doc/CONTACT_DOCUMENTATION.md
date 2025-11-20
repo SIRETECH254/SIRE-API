@@ -507,15 +507,22 @@ export const replyToMessage = async (req: Request, res: Response, next: NextFunc
             // Don't fail the request if email fails
         }
 
-        // Send in-app notification to sender if they are a registered client
+        // Send in-app notification to sender if they are a registered user with client role
         try {
-            const Client = await import('../models/Client').then(m => m.default);
-            const client = await Client.findOne({ email: message.email });
+            const User = await import('../models/User').then(m => m.default);
+            const Role = await import('../models/Role').then(m => m.default);
+            const clientRole = await Role.findOne({ name: 'client' });
+            
+            if (clientRole) {
+                const user = await User.findOne({ 
+                    email: message.email,
+                    roles: clientRole._id
+                });
 
-            if (client) {
-                await createInAppNotification({
-                    recipient: client._id.toString(),
-                    recipientModel: 'Client',
+                if (user) {
+                    await createInAppNotification({
+                        recipient: user._id.toString(),
+                        recipientModel: 'User',
                     category: 'general',
                     subject: 'Contact Message Replied',
                     message: `Your contact message "${message.subject}" has been replied to. Check your email for the reply.`,
@@ -955,15 +962,15 @@ The Contact system sends **in-app notifications** via Socket.io for real-time up
    - **Metadata:** `contactMessageId`, `senderName`, `senderEmail`, `subject`
 
 2. **Contact Message Replied** (`replyToMessage`)
-   - **Recipient:** Client (if sender is a registered client)
+   - **Recipient:** User with 'client' role (if sender is a registered user with client role)
    - **Category:** `general`
    - **Subject:** "Contact Message Replied"
-   - **Message:** Notifies client that their message has been replied to
+   - **Message:** Notifies user that their message has been replied to
    - **Metadata:** `contactMessageId`, `subject`, `reply`
 
-### Client Integration
-- If sender is a registered client, they receive in-app notifications
-- Client email lookup for notification delivery
+### User Integration
+- If sender is a registered user with 'client' role, they receive in-app notifications
+- User email lookup with role check for notification delivery
 
 ---
 

@@ -5,6 +5,7 @@ import validator from 'validator';
 import crypto from 'crypto';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import Role from '../models/Role';
 import { sendOTPNotification, sendPasswordResetNotification, sendWelcomeNotification } from '../services/internal/notificationService';
 
 // Helper function to generate JWT tokens
@@ -76,6 +77,25 @@ export const register = async (req: Request, res: Response, next: NextFunction):
         const saltRounds = 12;
         const hashedPassword: string = bcrypt.hashSync(password, saltRounds);
 
+        // Get default "client" role (or specified role if provided)
+        let assignedRoles: any[] = [];
+        if (role) {
+            // If role is specified, find it by name
+            const specifiedRole = await Role.findOne({ name: role.toLowerCase() });
+            if (specifiedRole) {
+                assignedRoles = [specifiedRole._id];
+            } else {
+                return next(errorHandler(400, `Role "${role}" not found`));
+            }
+        } else {
+            // Default to "client" role
+            const clientRole = await Role.findOne({ name: 'client' });
+            if (!clientRole) {
+                return next(errorHandler(500, "Default client role not found. Please run migration script first."));
+            }
+            assignedRoles = [clientRole._id];
+        }
+
         // Generate OTP
         const otp: string = generateOTP();
         const otpExpiry: Date = new Date(Date.now() + (parseInt(process.env.OTP_EXP_MINUTES || '10')) * 60 * 1000);
@@ -87,7 +107,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
             email: email.toLowerCase(),
             phone,
             password: hashedPassword,
-            role: role || 'staff',
+            roles: assignedRoles,
             otpCode: otp,
             otpExpiry,
             emailVerified: false
@@ -99,6 +119,9 @@ export const register = async (req: Request, res: Response, next: NextFunction):
         const notificationResult = await sendOTPNotification(email, phone, otp, `${firstName} ${lastName}`);
         console.log('OTP notification result:', notificationResult);
 
+        // Populate roles for response
+        await user.populate('roles', 'name displayName');
+
         res.status(201).json({
             success: true,
             message: "User registered successfully. Please verify your email with the OTP sent.",
@@ -108,7 +131,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
                 lastName: user.lastName,
                 email: user.email,
                 phone: user.phone,
-                role: user.role,
+                roles: user.roles,
                 emailVerified: user.emailVerified
             }
         });
@@ -162,6 +185,9 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
         user.otpExpiry = undefined as any;
         await user.save();
 
+        // Populate roles before generating tokens
+        await user.populate('roles', 'name displayName');
+
         // Send welcome notification
         const welcomeResult = await sendWelcomeNotification(user.email, user.phone || '', `${user.firstName} ${user.lastName}`);
         console.log('Welcome notification result:', welcomeResult);
@@ -179,7 +205,7 @@ export const verifyOTP = async (req: Request, res: Response, next: NextFunction)
                     lastName: user.lastName,
                     email: user.email,
                     phone: user.phone,
-                    role: user.role,
+                    roles: user.roles,
                     emailVerified: user.emailVerified
                 },
                 accessToken,
@@ -266,9 +292,9 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
             return next(errorHandler(400, "Email or phone is required"));
         }
 
-        // Find user by email or phone
+        // Find user by email or phone with roles populated
         const query: any = email ? { email: email.toLowerCase() } : { phone };
-        const user = await User.findOne(query).select('+password');
+        const user = await User.findOne(query).select('+password').populate('roles', 'name displayName');
 
         if (!user) {
             if (email) {
@@ -313,7 +339,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
                     email: user.email,
                     phone: user.phone,
                     avatar: user.avatar,
-                    role: user.role,
+                    roles: user.roles,
                     emailVerified: user.emailVerified
                 },
                 accessToken,
@@ -446,8 +472,8 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
         // Verify refresh token
         const decoded: any = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET as string);
 
-        // Check if user still exists
-        const user = await User.findById(decoded.userId);
+        // Check if user still exists with roles populated
+        const user = await User.findById(decoded.userId).populate('roles', 'name displayName');
 
         if (!user || !user.isActive) {
             return next(errorHandler(403, "User not found or inactive"));
@@ -473,7 +499,9 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 // @access  Private
 export const getMe = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const user = await User.findById(req.user?._id).select('-password -otpCode -resetPasswordToken');
+        const user = await User.findById(req.user?._id)
+            .select('-password -otpCode -resetPasswordToken')
+            .populate('roles', 'name displayName description permissions');
 
         if (!user) {
             return next(errorHandler(404, "User not found"));
@@ -489,7 +517,11 @@ export const getMe = async (req: Request, res: Response, next: NextFunction): Pr
                     email: user.email,
                     phone: user.phone,
                     avatar: user.avatar,
-                    role: user.role,
+                    roles: user.roles,
+                    company: user.company,
+                    address: user.address,
+                    city: user.city,
+                    country: user.country,
                     isActive: user.isActive,
                     emailVerified: user.emailVerified,
                     lastLoginAt: user.lastLoginAt,
