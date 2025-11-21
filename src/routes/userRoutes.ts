@@ -232,6 +232,13 @@ router.post('/admin-create', authenticateToken, authorizeRoles(['super_admin', '
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllUsers);
 
 /**
+ * @route   GET /api/users/clients
+ * @desc    Get clients (users with client role)
+ * @access  Private (Admin)
+ */
+router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
+
+/**
  * @route   GET /api/users/:userId
  * @desc    Get single user (admin)
  * @access  Private (Admin only)
@@ -286,12 +293,5 @@ router.post('/:userId/roles', authenticateToken, requireAdmin, assignRole);
  * @access  Private (Super Admin only)
  */
 router.delete('/:userId/roles/:roleId', authenticateToken, requireAdmin, removeRole);
-
-/**
- * @route   GET /api/users/clients
- * @desc    Get clients (users with client role)
- * @access  Private (Admin)
- */
-router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
 
 export default router;

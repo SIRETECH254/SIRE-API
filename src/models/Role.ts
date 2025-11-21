@@ -38,7 +38,7 @@ const roleSchema = new Schema<IRole>({
 });
 
 // Indexes for better performance
-roleSchema.index({ name: 1 });
+// Note: 'name' index is automatically created by unique: true
 roleSchema.index({ isActive: 1 });
 roleSchema.index({ isSystemRole: 1 });
 

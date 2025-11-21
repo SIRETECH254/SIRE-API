@@ -21,6 +21,11 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "Quotation is required"));
         }
 
+        // Check if user is authenticated
+        if (!req.user || !req.user._id) {
+            return next(errorHandler(401, "Authentication required"));
+        }
+
         // Check if quotation exists
         const quotationExists = await Quotation.findById(quotation)
             .populate('project', 'title');
@@ -34,25 +39,47 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "This quotation has already been converted to an invoice"));
         }
 
+        // Validate quotation has items
+        if (!quotationExists.items || quotationExists.items.length === 0) {
+            return next(errorHandler(400, "Quotation must have at least one item"));
+        }
+
         // Get project title from populated project
-        const projectTitle = (quotationExists.project as any)?.title || '';
+        const projectTitle = (quotationExists.project as any)?.title || 'Untitled Project';
+
+        // Map items from quotation
+        const items = quotationExists.items.map((item: any) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            total: item.quantity * item.unitPrice
+        }));
+
+        // Calculate subtotal from items
+        const subtotal = items.reduce((sum: number, item: any) => sum + item.total, 0);
+        
+        // Get tax and discount from quotation (with defaults)
+        const tax = quotationExists.tax || 0;
+        const discount = quotationExists.discount || 0;
+        
+        // Calculate total amount
+        const totalAmount = subtotal + tax - discount;
 
         // Create invoice from quotation data
         const invoice = new Invoice({
             client: quotationExists.client,
             quotation: quotationExists._id,
             projectTitle: projectTitle,
-            items: quotationExists.items.map((item: any) => ({
-                description: item.description,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                total: item.total
-            })),
-            tax: quotationExists.tax,
-            discount: quotationExists.discount,
+            items: items,
+            subtotal: subtotal,
+            tax: tax,
+            discount: discount,
+            totalAmount: totalAmount,
+            paidAmount: 0,
+            status: 'draft',
             dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
             notes: quotationExists.notes,
-            createdBy: (req as any).user?._id
+            createdBy: req.user._id
         });
 
         await invoice.save();
@@ -105,7 +132,14 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
 
     } catch (error: any) {
         console.error('Create invoice error:', error);
-        next(errorHandler(500, "Server error while creating invoice"));
+        // Provide more specific error messages
+        if (error.name === 'ValidationError') {
+            return next(errorHandler(400, `Validation error: ${error.message}`));
+        }
+        if (error.name === 'CastError') {
+            return next(errorHandler(400, `Invalid quotation ID format`));
+        }
+        next(errorHandler(500, error.message || "Server error while creating invoice"));
     }
 };
 

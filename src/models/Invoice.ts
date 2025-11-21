@@ -110,13 +110,24 @@ invoiceSchema.index({ dueDate: 1 });
 invoiceSchema.index({ client: 1, status: 1 });
 invoiceSchema.index({ createdAt: -1 });
 
-invoiceSchema.pre('save', async function(next) {
-  if (!(this as any).invoiceNumber) {
-    const year = new Date().getFullYear();
-    const count = await mongoose.model('Invoice').countDocuments();
-    (this as any).invoiceNumber = `INV-${year}-${String(count + 1).padStart(4, '0')}`;
+// Pre-validate hook runs before validation, ensuring invoiceNumber is set
+invoiceSchema.pre('validate', async function(next) {
+  try {
+    // Only generate invoice number for new documents that don't have one
+    if ((this as any).isNew && !(this as any).invoiceNumber) {
+      const year = new Date().getFullYear();
+      // Count documents created in the current year
+      const startOfYear = new Date(year, 0, 1);
+      const count = await mongoose.model('Invoice').countDocuments({
+        createdAt: { $gte: startOfYear }
+      });
+      (this as any).invoiceNumber = `INV-${year}-${String(count + 1).padStart(4, '0')}`;
+    }
+    next();
+  } catch (error: any) {
+    console.error('Error generating invoice number:', error);
+    next(error);
   }
-  next();
 });
 
 invoiceSchema.pre('save', function(next) {
