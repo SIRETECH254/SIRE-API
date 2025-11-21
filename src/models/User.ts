@@ -29,19 +29,35 @@ const userSchema = new Schema<IUser>({
     minlength: [6, 'Password must be at least 6 characters'],
     select: false // Don't include password in queries by default
   },
-  role: {
-    type: String,
-    required: [true, 'Role is required'],
-    enum: {
-      values: ['super_admin', 'finance', 'project_manager', 'staff', 'admin'],
-      message: 'Role must be one of: super_admin, finance, project_manager, staff'
-    },
-    default: 'staff'
-  },
+  roles: [{
+    type: Schema.Types.ObjectId,
+    ref: 'Role'
+  }],
   phone: {
     type: String,
+    required: [true, 'Phone number is required'],
     trim: true,
     match: [/^[\+]?[1-9][\d]{0,15}$/, 'Please enter a valid phone number']
+  },
+  company: {
+    type: String,
+    trim: true,
+    maxlength: [100, 'Company name cannot exceed 100 characters']
+  },
+  address: {
+    type: String,
+    trim: true,
+    maxlength: [200, 'Address cannot exceed 200 characters']
+  },
+  city: {
+    type: String,
+    trim: true,
+    maxlength: [50, 'City name cannot exceed 50 characters']
+  },
+  country: {
+    type: String,
+    trim: true,
+    maxlength: [50, 'Country name cannot exceed 50 characters']
   },
   isActive: {
     type: Boolean,
@@ -101,12 +117,21 @@ const userSchema = new Schema<IUser>({
 });
 
 // Indexes for better performance (email index created automatically by unique: true)
-userSchema.index({ role: 1 });
+userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ company: 1 });
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
+});
+
+// Virtual for primary role (first role in array)
+userSchema.virtual('primaryRole', {
+  ref: 'Role',
+  localField: 'roles',
+  foreignField: '_id',
+  justOne: true
 });
 
 // Ensure virtual fields are serialized

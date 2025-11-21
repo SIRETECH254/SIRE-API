@@ -7,7 +7,7 @@ import {
     getClientActivityStats,
     getServiceDemandStats
 } from '../controllers/dashboardController';
-import { authenticateToken, authenticateClientToken, authorizeRoles } from '../middleware/auth';
+import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -23,7 +23,7 @@ router.get('/admin', authenticateToken, authorizeRoles(['super_admin', 'finance'
  * @desc    Get client dashboard statistics
  * @access  Private (Client)
  */
-router.get('/client', authenticateClientToken, getClientDashboard);
+router.get('/client', authenticateToken, getClientDashboard);
 
 /**
  * @route   GET /api/dashboard/revenue

@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Payment from '../models/Payment';
 import Invoice from '../models/Invoice';
-import Client from '../models/Client';
+import User from '../models/User';
+import Role from '../models/Role';
 import { createPaymentRecord, applySuccessfulPayment, initiateMpesaForInvoice, initiatePaystackForInvoice, validatePaymentAmount } from '../services/internal/paymentService';
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from '../services/external/darajaService';
 import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../services/external/paystackService';
@@ -32,7 +33,7 @@ export const createPaymentAdmin = async (req: Request, res: Response, next: Next
             return next(errorHandler(400, "Invalid payment amount"));
         }
 
-        const client = await Client.findById(invoice.client);
+        const client = await User.findById(invoice.client);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -291,7 +292,7 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
         }
 
         // Get client information
-        const client = await Client.findById(invoice.client);
+        const client = await User.findById(invoice.client);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -435,7 +436,7 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
                 if (invoice) {
                     await createInAppNotification({
                         recipient: payment.client.toString(),
-                        recipientModel: 'Client',
+                        recipientModel: 'User',
                         category: 'payment',
                         subject: 'Payment Failed',
                         message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
@@ -527,7 +528,7 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
                 if (invoice) {
                     await createInAppNotification({
                         recipient: payment.client.toString(),
-                        recipientModel: 'Client',
+                        recipientModel: 'User',
                         category: 'payment',
                         subject: 'Payment Failed',
                         message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
@@ -602,12 +603,16 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
             return next(errorHandler(502, result.error || "Failed to query M-Pesa status"));
         }
 
+        // Convert resultCode to string to ensure consistency
+        const resultCode = String(result.resultCode ?? '');
+        const resultDesc = String(result.resultDesc ?? '');
+
         console.log('===== SAFARICOM QUERY RESULT =====');
-        console.log('Result Code:', result.resultCode);
-        console.log('Result Desc:', result.resultDesc);
+        console.log('Result Code:', resultCode);
+        console.log('Result Desc:', resultDesc);
         console.log('==================================');
         
-        if (result.resultCode === 0 && payment.status !== 'completed') {
+        if (resultCode === '0' && payment.status !== 'completed') {
             const invoice = await Invoice.findById(payment.invoice);
             if (invoice) {
                 await applySuccessfulPayment({ 
@@ -617,7 +622,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
                     method: 'mpesa' 
                 });
             }
-        } else if (result.resultCode !== 0 && payment.status !== 'failed') {
+
+            console.log("paymentstatus", payment.status)
+            
+        } else if (resultCode !== '0' && payment.status !== 'failed') {
             payment.status = 'failed';
             await payment.save();
             req.app.get('io')?.emit('payment.updated', { 
@@ -629,10 +637,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         res.status(200).json({ 
             success: true, 
             data: { 
-                resultCode: result.resultCode, 
-                resultDesc: result.resultDesc,
-                paymentId: payment._id,
-                invoiceId: payment.invoice,
+                resultCode: resultCode, 
+                resultDesc: resultDesc,
+                paymentId: payment._id.toString(),
+                invoiceId: payment.invoice.toString(),
                 raw: result.raw
             } 
         });

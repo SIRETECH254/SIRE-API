@@ -10,7 +10,7 @@ import {
     publishTestimonial,
     unpublishTestimonial
 } from '../controllers/testimonialController';
-import { authenticateToken, authenticateClientToken, authorizeRoles } from '../middleware/auth';
+import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -19,7 +19,7 @@ const router = express.Router();
  * @desc    Create testimonial (client)
  * @access  Private (Client)
  */
-router.post('/', authenticateClientToken, createTestimonial);
+router.post('/', authenticateToken, createTestimonial);
 
 /**
  * @route   GET /api/testimonials/published
@@ -61,21 +61,21 @@ router.post('/:id/unpublish', authenticateToken, authorizeRoles(['super_admin', 
  * @desc    Get single testimonial
  * @access  Private (Client owner or Admin)
  */
-router.get('/:id', authenticateClientToken, getTestimonial);
+router.get('/:id', authenticateToken, getTestimonial);
 
 /**
  * @route   PUT /api/testimonials/:id
  * @desc    Update testimonial
  * @access  Private (Client owner or Admin)
  */
-router.put('/:id', authenticateClientToken, updateTestimonial);
+router.put('/:id', authenticateToken, updateTestimonial);
 
 /**
  * @route   DELETE /api/testimonials/:id
  * @desc    Delete testimonial
  * @access  Private (Client owner or Admin)
  */
-router.delete('/:id', authenticateClientToken, deleteTestimonial);
+router.delete('/:id', authenticateToken, deleteTestimonial);
 
 export default router;
 

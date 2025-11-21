@@ -12,7 +12,10 @@ import {
     setUserAdmin,
     getUserRoles,
     deleteUser,
-    adminCreateCustomer
+    adminCreateCustomer,
+    assignRole,
+    removeRole,
+    getClients
 } from '../controllers/userController';
 import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/auth';
 import { uploadUserAvatar } from '../config/cloudinary';
@@ -229,6 +232,13 @@ router.post('/admin-create', authenticateToken, authorizeRoles(['super_admin', '
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllUsers);
 
 /**
+ * @route   GET /api/users/clients
+ * @desc    Get clients (users with client role)
+ * @access  Private (Admin)
+ */
+router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
+
+/**
  * @route   GET /api/users/:userId
  * @desc    Get single user (admin)
  * @access  Private (Admin only)
@@ -269,5 +279,19 @@ router.get('/:userId/roles', authenticateToken, authorizeRoles(['super_admin', '
  * @access  Private (Super Admin only)
  */
 router.delete('/:userId', authenticateToken, requireAdmin, deleteUser);
+
+/**
+ * @route   POST /api/users/:userId/roles
+ * @desc    Assign role to user
+ * @access  Private (Super Admin only)
+ */
+router.post('/:userId/roles', authenticateToken, requireAdmin, assignRole);
+
+/**
+ * @route   DELETE /api/users/:userId/roles/:roleId
+ * @desc    Remove role from user
+ * @access  Private (Super Admin only)
+ */
+router.delete('/:userId/roles/:roleId', authenticateToken, requireAdmin, removeRole);
 
 export default router;

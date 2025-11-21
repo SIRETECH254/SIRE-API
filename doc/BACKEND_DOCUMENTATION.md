@@ -68,7 +68,7 @@
 
 ## 🗄️ Database Models
 
-### 1. User Model (Admin)
+### 1. User Model (Unified)
 ```typescript
 interface IUser {
   _id: ObjectId;
@@ -76,61 +76,79 @@ interface IUser {
   lastName: string;
   email: string;
   password: string;
-  role: 'super_admin' | 'finance' | 'project_manager' | 'staff';
-  phone?: string;
-  isActive: boolean;
-  avatar?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-**Fields:**
-- `firstName`, `lastName` - Admin name
-- `email` - Unique, required
-- `password` - Hashed password
-- `role` - Access level (super_admin, finance, project_manager, staff)
-- `phone` - Contact number
-- `isActive` - Account status
-- `avatar` - Profile image URL
-- Timestamps
-
----
-
-### 2. Client Model
-```typescript
-interface IClient {
-  _id: ObjectId;
-  firstName: string;
-  lastName: string;
-  email: string;
-  password: string;
+  roles: ObjectId[]; // Array of Role references
   phone: string;
   company?: string;
   address?: string;
   city?: string;
   country?: string;
-  avatar?: string | null;
-  avatarPublicId?: string | null;
   isActive: boolean;
   emailVerified: boolean;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
+  otpCode?: string;
+  otpExpiry?: Date;
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  lastLoginAt?: Date;
+  notificationPreferences?: {
+    email?: boolean;
+    sms?: boolean;
+    inApp?: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
 **Fields:**
-- `firstName`, `lastName` - Client name
+- `firstName`, `lastName` - User name
 - `email` - Unique, required
 - `password` - Hashed password
-- `phone` - Contact number
-- `company` - Business name (optional)
-- `address`, `city`, `country` - Location details
-- `avatar` - Profile picture URL (optional)
-- `avatarPublicId` - Cloudinary public ID for avatar (optional)
+- `roles` - Array of Role ObjectIds (at least one required)
+- `phone` - Contact number (required)
+- `company` - Business name (optional, for clients)
+- `address`, `city`, `country` - Location details (optional, for clients)
 - `isActive` - Account status
 - `emailVerified` - Email verification status
+- `avatar` - Profile image URL (optional)
+- `avatarPublicId` - Cloudinary public ID for avatar (optional)
+- OTP and password reset fields
+- Activity tracking and notification preferences
 - Timestamps
+
+---
+
+### 2. Role Model
+```typescript
+interface IRole {
+  _id: ObjectId;
+  name: string; // Unique, lowercase (e.g., 'super_admin', 'client')
+  displayName: string; // Human-readable name
+  description?: string;
+  permissions: string[]; // Array of permission strings
+  isActive: boolean;
+  isSystemRole: boolean; // True for system roles that cannot be deleted
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**Fields:**
+- `name` - Unique role identifier (lowercase, required)
+- `displayName` - Human-readable role name (required)
+- `description` - Role description (optional)
+- `permissions` - Array of permission strings (e.g., ['user:read', 'project:create'])
+- `isActive` - Role status (default: true)
+- `isSystemRole` - System role flag (prevents deletion, default: false)
+- Timestamps
+
+**System Roles:**
+- `super_admin` - Full system access
+- `finance` - Financial operations access
+- `project_manager` - Project management access
+- `staff` - Basic staff access
+- `client` - External client/customer access (default for new registrations)
 
 ---
 
@@ -166,7 +184,7 @@ interface IQuotation {
   _id: ObjectId;
   quotationNumber: string; // Auto-generated (QT-2025-0001)
   project: ObjectId; // Reference to Project
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   items: Array<{
     description: string;
     quantity: number;
@@ -190,7 +208,7 @@ interface IQuotation {
 **Fields:**
 - `quotationNumber` - Unique identifier (auto-generated)
 - `project` - Reference to Project model
-- `client` - Client reference
+- `client` - Reference to User (with client role)
 - `items` - Array of quotation items with description, quantity, unitPrice, and total
 - `subtotal` - Sum of all item totals (auto-calculated)
 - `tax` - Tax amount (default: 0)
@@ -210,7 +228,7 @@ interface IQuotation {
 interface IInvoice {
   _id: ObjectId;
   invoiceNumber: string; // Auto-generated (INV-2025-0001)
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   quotation?: ObjectId; // Reference to Quotation (if converted)
   projectTitle: string;
   items: Array<{
@@ -236,7 +254,7 @@ interface IInvoice {
 
 **Fields:**
 - `invoiceNumber` - Unique identifier
-- `client` - Client reference
+- `client` - Reference to User (with client role)
 - `quotation` - Source quotation (optional)
 - `projectTitle` - Project name
 - `items` - Billing items
@@ -257,7 +275,7 @@ interface IPayment {
   _id: ObjectId;
   paymentNumber: string; // Auto-generated (PAY-2025-0001)
   invoice: ObjectId; // Reference to Invoice
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   amount: number;
   paymentMethod: 'mpesa' | 'paystack';
   status: 'pending' | 'completed' | 'failed';
@@ -306,7 +324,7 @@ interface IProject {
   projectNumber: string; // Auto-generated (PRJ-2025-0001)
   title: string;
   description: string;
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   quotation?: ObjectId; // Reference to Quotation
   invoice?: ObjectId; // Reference to Invoice
   services: ObjectId[]; // References to Services
@@ -340,7 +358,7 @@ interface IProject {
 **Fields:**
 - `projectNumber` - Unique identifier
 - `title`, `description` - Project details
-- `client` - Client reference
+- `client` - Reference to User (with client role)
 - `quotation`, `invoice` - Related documents
 - `services` - Services included
 - `status` - Project lifecycle status
@@ -360,7 +378,7 @@ interface IProject {
 ```typescript
 interface ITestimonial {
   _id: ObjectId;
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   project?: ObjectId; // Reference to Project
   rating: number; // 1-5
   message: string;
@@ -374,7 +392,7 @@ interface ITestimonial {
 ```
 
 **Fields:**
-- `client` - Client who gave testimonial
+- `client` - User (with client role) who gave testimonial
 - `project` - Related project (optional)
 - `rating` - Star rating (1-5)
 - `message` - Testimonial text
@@ -390,8 +408,8 @@ interface ITestimonial {
 ```typescript
 interface INotification {
   _id: ObjectId;
-  recipient: ObjectId; // Reference to User or Client
-  recipientModel: 'User' | 'Client';
+  recipient: ObjectId; // Reference to User
+  recipientModel: 'User';
   type: 'email' | 'sms' | 'push' | 'in_app';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
   subject: string;
@@ -409,8 +427,8 @@ interface INotification {
 ```
 
 **Fields:**
-- `recipient` - Who receives the notification (refPath: 'recipientModel')
-- `recipientModel` - User type ('User' or 'Client')
+- `recipient` - Who receives the notification (reference to User)
+- `recipientModel` - Always 'User' (unified user system)
 - `type` - Notification channel (email, sms, push, in_app)
 - `category` - Notification category (invoice, payment, project, quotation, general)
 - `subject` - Notification subject (max 200 characters)
@@ -470,23 +488,20 @@ interface IContactMessage {
 - `refreshToken()` - Refresh JWT token
 - `getMe()` - Get current user profile
 
-**Note:** Client registration is handled in `clientController.ts` with `registerClient()` function.
+**Note:** All user registration (including clients) is handled through the unified `register()` function in `authController.ts`. New users are automatically assigned the 'client' role by default.
 
 ---
 
-### 2. Client Controllers
+### 2. Role Controllers
 
-#### `clientController.ts`
-- `registerClient()` - Register new client with optional avatar upload
-- `getAllClients()` - Get all clients (admin)
-- `getClient()` - Get single client
-- `updateClientProfile()` - Update own profile with avatar support
-- `updateClient()` - Update client profile (admin) with avatar support
-- `deleteClient()` - Delete client (admin)
-- `getClientStats()` - Get client statistics
-- `getClientProjects()` - Get client's projects
-- `getClientInvoices()` - Get client's invoices
-- `getClientPayments()` - Get client's payments
+#### `roleController.ts`
+- `createRole()` - Create new role (super admin only)
+- `getAllRoles()` - Get all roles
+- `getRole()` - Get single role by ID
+- `updateRole()` - Update role (super admin only)
+- `deleteRole()` - Delete role (super admin only, cannot delete system roles)
+- `getUsersByRole()` - Get all users with a specific role
+- `getClients()` - Get all users with 'client' role
 
 ---
 
@@ -671,22 +686,21 @@ POST   /refresh-token             // Refresh token
 GET    /me                        // Get current user profile
 ```
 
-**Note:** Client registration is at `/api/clients/register` (see Client Routes).
+**Note:** All user registration (including clients) is handled through `/api/auth/register`. New users are automatically assigned the 'client' role by default.
 
 ---
 
-### Client Routes
-**Base:** `/api/clients`
+### Role Routes
+**Base:** `/api/roles`
 
 ```typescript
-GET    /                          // Get all clients (admin)
-GET    /:id                       // Get single client
-PUT    /:id                       // Update client (with avatar upload support)
-DELETE /:id                       // Delete client (admin)
-GET    /:id/stats                 // Get client stats
-GET    /:id/projects              // Get client projects
-GET    /:id/invoices              // Get client invoices
-GET    /:id/payments              // Get client payments
+POST   /                          // Create role (super admin only)
+GET    /                          // Get all roles
+GET    /:id                       // Get single role
+PUT    /:id                       // Update role (super admin only)
+DELETE /:id                       // Delete role (super admin only)
+GET    /:id/users                 // Get users with specific role
+GET    /clients                   // Get all users with 'client' role
 ```
 
 ---
@@ -888,7 +902,7 @@ sire-api/
 │   │   
 │   ├── models/
 │   │   ├── User.ts
-│   │   ├── Client.ts
+│   │   ├── Role.ts
 │   │   ├── Service.ts
 │   │   ├── Quotation.ts
 │   │   ├── Invoice.ts
@@ -899,7 +913,7 @@ sire-api/
 │   │   └── ContactMessage.ts
 │   ├── controllers/
 │   │   ├── authController.ts
-│   │   ├── clientController.ts
+│   │   ├── roleController.ts
 │   │   ├── serviceController.ts
 │   │   ├── quotationController.ts
 │   │   ├── invoiceController.ts
@@ -912,7 +926,7 @@ sire-api/
 │   │   └── userController.ts
 │   ├── routes/
 │   │   ├── authRoutes.ts
-│   │   ├── clientRoutes.ts
+│   │   ├── roleRoutes.ts
 │   │   ├── serviceRoutes.ts
 │   │   ├── quotationRoutes.ts
 │   │   ├── invoiceRoutes.ts

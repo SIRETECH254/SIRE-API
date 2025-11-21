@@ -2,9 +2,15 @@ import jwt from 'jsonwebtoken';
 
 // Helper function to generate JWT tokens
 export const generateTokens = (user: any): { accessToken: string; refreshToken: string } => {
+    // Extract role IDs from user.roles (can be ObjectId or populated)
+    const roleIds = user.roles 
+        ? user.roles.map((role: any) => role._id ? role._id.toString() : role.toString())
+        : [];
+
     const payload = {
         userId: user._id,
-        role: user.role
+        roleIds: roleIds,
+        userType: "user"
     };
 
     const accessToken = jwt.sign(

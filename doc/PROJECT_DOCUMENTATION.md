@@ -47,7 +47,7 @@ interface IProject {
   projectNumber: string;        // Auto-generated (PRJ-2025-0001)
   title: string;
   description: string;
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   quotation?: ObjectId;          // Reference to Quotation (auto-set when quotation created)
   invoice?: ObjectId;            // Reference to Invoice (auto-set when invoice created)
   services: ObjectId[];          // References to Services
@@ -100,7 +100,7 @@ interface IProject {
 // Required fields
 title: { required: true, maxlength: 200 }
 description: { required: true }
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 status: { required: true, enum: ['pending', 'in_progress', 'on_hold', 'completed', 'cancelled'] }
 priority: { required: true, enum: ['low', 'medium', 'high', 'urgent'] }
 progress: { required: true, min: 0, max: 100 }
@@ -351,7 +351,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         }
 
         // Check if client exists
-        const clientExists = await Client.findById(client);
+        const clientExists = await User.findById(client);
         if (!clientExists) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -383,7 +383,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'New Project Created',
                 message: `A new project "${project.title}" has been created.`,
@@ -788,7 +788,7 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'Project Status Updated',
                 message: `Project "${project.title}" status has been updated to: ${project.status}`,
@@ -902,7 +902,7 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
             if (isMilestoneProgress) {
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: 'Project Progress Updated',
                     message: `Project "${project.title}" progress has been updated to ${progress}%`,
@@ -989,7 +989,7 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: 'New Milestone Added',
                     message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
@@ -1098,7 +1098,7 @@ export const updateMilestone = async (req: Request, res: Response, next: NextFun
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'Milestone Updated',
                 message: `Milestone "${milestone.title}" in project "${project.title}" has been marked as ${milestone.status}`,
@@ -1250,7 +1250,7 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
                     message: fileCount === 1 

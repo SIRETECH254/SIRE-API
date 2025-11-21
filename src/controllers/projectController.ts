@@ -2,8 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { errorHandler } from '../middleware/errorHandler';
 import Project from '../models/Project';
-import Client from '../models/Client';
 import User from '../models/User';
+import Role from '../models/Role';
 import Service from '../models/Service';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 import { createInAppNotification } from '../utils/notificationHelper';
@@ -36,7 +36,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         }
 
         // Check if client exists
-        const clientExists = await Client.findById(client);
+        const clientExists = await User.findById(client);
         if (!clientExists) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -112,7 +112,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'New Project Created',
                 message: `A new project "${project.title}" has been created.`,
@@ -469,7 +469,7 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'Project Status Updated',
                 message: `Project "${project.title}" status has been updated to: ${project.status}`,
@@ -568,7 +568,7 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
             if (isMilestoneProgress) {
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: 'Project Progress Updated',
                     message: `Project "${project.title}" progress has been updated to ${progress}%`,
@@ -640,7 +640,7 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: 'New Milestone Added',
                     message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
@@ -734,7 +734,7 @@ export const updateMilestone = async (req: Request, res: Response, next: NextFun
             // For Client
             await createInAppNotification({
                 recipient: project.client.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'project',
                 subject: 'Milestone Updated',
                 message: `Milestone "${(milestone as any).title}" in project "${project.title}" has been marked as ${(milestone as any).status}`,
@@ -867,7 +867,7 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
                 // For Client
                 await createInAppNotification({
                     recipient: project.client.toString(),
-                    recipientModel: 'Client',
+                    recipientModel: 'User',
                     category: 'project',
                     subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
                     message: fileCount === 1 

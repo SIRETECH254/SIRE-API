@@ -1,12 +1,11 @@
 import Notification from '../models/Notification';
 import User from '../models/User';
-import Client from '../models/Client';
 import { Server as SocketIOServer } from 'socket.io';
 import type { NotificationAction, NotificationContext } from '../types';
 
 interface CreateInAppNotificationParams {
   recipient: string;
-  recipientModel: 'User' | 'Client';
+  recipientModel: 'User';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
   subject: string;
   message: string;
@@ -32,13 +31,8 @@ export const createInAppNotification = async (params: CreateInAppNotificationPar
       io 
     } = params;
 
-    // ✅ CHECK USER/CLIENT NOTIFICATION PREFERENCES
-    let recipientUser: any = null;
-    if (recipientModel === 'User') {
-      recipientUser = await User.findById(recipient).select('notificationPreferences');
-    } else {
-      recipientUser = await Client.findById(recipient).select('notificationPreferences');
-    }
+    // ✅ CHECK USER NOTIFICATION PREFERENCES
+    const recipientUser = await User.findById(recipient).select('notificationPreferences');
     
     // Check if in-app notifications are enabled for this user
     if (recipientUser && recipientUser.notificationPreferences) {
@@ -75,7 +69,7 @@ export const createInAppNotification = async (params: CreateInAppNotificationPar
 
     // Emit Socket.io event with full notification data including actions
     if (io) {
-      const roomId = recipientModel === 'User' ? `user_${recipient}` : `client_${recipient}`;
+      const roomId = `user_${recipient}`;
       io.to(roomId).emit('notification', {
         notificationId: notification._id,
         category,

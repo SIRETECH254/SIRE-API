@@ -40,7 +40,7 @@ The SIRE Tech API Testimonial Management System handles all testimonial-related 
 ```typescript
 interface ITestimonial {
   _id: string;
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   project?: ObjectId;            // Reference to Project (optional)
   rating: number;                // 1-5 star rating
   message: string;               // Testimonial text
@@ -64,7 +64,7 @@ interface ITestimonial {
 ### Validation Rules
 ```typescript
 // Required fields
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 rating: { required: true, min: 1, max: 5 }
 message: { required: true, minlength: 10, maxlength: 1000 }
 isApproved: { default: false }
@@ -591,7 +591,7 @@ export const approveTestimonial = async (req: Request, res: Response, next: Next
         try {
             await createInAppNotification({
                 recipient: testimonial.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'general',
                 subject: 'Testimonial Approved',
                 message: `Your testimonial has been approved by admin. It will be published soon.`,
@@ -662,7 +662,7 @@ export const publishTestimonial = async (req: Request, res: Response, next: Next
         try {
             await createInAppNotification({
                 recipient: testimonial.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'general',
                 subject: 'Testimonial Published',
                 message: `Your testimonial has been published and is now visible on our website. Thank you for your feedback!`,
@@ -727,7 +727,7 @@ export const unpublishTestimonial = async (req: Request, res: Response, next: Ne
         try {
             await createInAppNotification({
                 recipient: testimonial.client._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'general',
                 subject: 'Testimonial Unpublished',
                 message: `Your testimonial has been unpublished and is no longer visible on our website.`,

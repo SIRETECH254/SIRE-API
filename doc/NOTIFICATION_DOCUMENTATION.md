@@ -55,8 +55,8 @@ The SIRE Tech API Notification System handles all notification-related operation
 ```typescript
 interface INotification {
   _id: string;
-  recipient: ObjectId;           // Reference to User or Client
-  recipientModel: 'User' | 'Client';
+  recipient: ObjectId;           // Reference to User
+  recipientModel: 'User';
   type: 'email' | 'sms' | 'push' | 'in_app';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
   subject: string;
@@ -110,7 +110,7 @@ interface NotificationContext {
 ```typescript
 // Required fields
 recipient: { required: true, refPath: 'recipientModel' }
-recipientModel: { required: true, enum: ['User', 'Client'] }
+recipientModel: { required: true, enum: ['User'] }
 type: { required: true, enum: ['email', 'sms', 'push', 'in_app'] }
 category: { required: true, enum: ['invoice', 'payment', 'project', 'quotation', 'general'] }
 subject: { required: true, maxlength: 200 }
@@ -141,7 +141,7 @@ const notificationSchema = new Schema<INotification>({
     type: String,
     required: [true, 'Recipient model is required'],
     enum: {
-      values: ['User', 'Client'],
+      values: ['User'],
       message: 'Recipient model must be User or Client'
     }
   },
@@ -257,7 +257,7 @@ export const sendNotification = async (req: Request, res: Response, next: NextFu
     try {
         const { recipient, recipientModel, type, category, subject, message, metadata }: {
             recipient: string;
-            recipientModel: 'User' | 'Client';
+            recipientModel: 'User';
             type: 'email' | 'sms' | 'push' | 'in_app';
             category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
             subject: string;
@@ -271,7 +271,7 @@ export const sendNotification = async (req: Request, res: Response, next: NextFu
         }
 
         // Verify recipient exists
-        const RecipientModel = recipientModel === 'User' ? User : Client;
+        const RecipientModel = User;
         const recipientExists = await RecipientModel.findById(recipient);
         if (!recipientExists) {
             return next(errorHandler(404, "Recipient not found"));
@@ -587,7 +587,7 @@ export const sendInvoiceReminder = async (req: Request, res: Response, next: Nex
         // Send email
         const notification = new Notification({
             recipient: invoiceDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'email',
             category: 'invoice',
             subject,
@@ -647,7 +647,7 @@ export const sendPaymentConfirmation = async (req: Request, res: Response, next:
         // Create notification
         const notification = new Notification({
             recipient: paymentDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'email',
             category: 'payment',
             subject,
@@ -707,7 +707,7 @@ export const sendProjectUpdate = async (req: Request, res: Response, next: NextF
         // Notify client
         const clientNotification = new Notification({
             recipient: projectDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'in_app',
             category: 'project',
             subject,
@@ -771,7 +771,7 @@ export const sendBulkNotification = async (req: Request, res: Response, next: Ne
     try {
         const { recipients, recipientModel, type, category, subject, message }: {
             recipients: string[];
-            recipientModel: 'User' | 'Client';
+            recipientModel: 'User';
             type: 'email' | 'sms' | 'in_app';
             category: string;
             subject: string;

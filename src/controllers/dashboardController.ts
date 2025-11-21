@@ -4,9 +4,9 @@ import Project from '../models/Project';
 import Invoice from '../models/Invoice';
 import Payment from '../models/Payment';
 import Quotation from '../models/Quotation';
-import Client from '../models/Client';
 import Service from '../models/Service';
 import User from '../models/User';
+import Role from '../models/Role';
 
 // @desc    Get admin dashboard statistics
 // @route   GET /api/dashboard/admin
@@ -53,10 +53,12 @@ export const getAdminDashboard = async (req: Request, res: Response, next: NextF
             converted: await Quotation.countDocuments({ status: 'converted' })
         };
 
-        // Clients statistics
-        const totalClients = await Client.countDocuments();
-        const activeClients = await Client.countDocuments({ isActive: true });
-        const verifiedClients = await Client.countDocuments({ emailVerified: true });
+        // Clients statistics (users with client role)
+        const clientRole = await Role.findOne({ name: 'client' });
+        const clientQuery = clientRole ? { roles: clientRole._id } : {};
+        const totalClients = await User.countDocuments(clientQuery);
+        const activeClients = await User.countDocuments({ ...clientQuery, isActive: true });
+        const verifiedClients = await User.countDocuments({ ...clientQuery, emailVerified: true });
 
         // Services statistics
         const totalServices = await Service.countDocuments();
@@ -139,8 +141,8 @@ export const getClientDashboard = async (req: Request, res: Response, next: Next
             return next(errorHandler(401, "Client authentication required"));
         }
 
-        // Verify client exists
-        const client = await Client.findById(clientId);
+        // Verify client exists (user with client role)
+        const client = await User.findById(clientId);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -429,17 +431,23 @@ export const getClientActivityStats = async (req: Request, res: Response, next: 
             start.setFullYear(start.getFullYear() - 1);
         }
 
-        // Total clients
-        const totalClients = await Client.countDocuments();
-        const activeClients = await Client.countDocuments({ isActive: true });
+        // Get client role for filtering
+        const clientRole = await Role.findOne({ name: 'client' });
+        const clientQuery = clientRole ? { roles: clientRole._id } : {};
+
+        // Total clients (users with client role)
+        const totalClients = await User.countDocuments(clientQuery);
+        const activeClients = await User.countDocuments({ ...clientQuery, isActive: true });
 
         // New clients in period
-        const newClients = await Client.countDocuments({
+        const newClients = await User.countDocuments({
+            ...clientQuery,
             createdAt: { $gte: start, $lte: end }
         });
 
         // Clients with recent activity (last login)
-        const activeClientCount = await Client.countDocuments({
+        const activeClientCount = await User.countDocuments({
+            ...clientQuery,
             lastLoginAt: { $gte: start, $lte: end }
         });
 
@@ -453,7 +461,7 @@ export const getClientActivityStats = async (req: Request, res: Response, next: 
         // Populate client details
         const topClients = await Promise.all(
             clientProjects.map(async (item: any) => {
-                const client = await Client.findById(item._id).select('firstName lastName email company');
+                const client = await User.findById(item._id).select('firstName lastName email company');
                 return {
                     client: client,
                     projectCount: item.projectCount

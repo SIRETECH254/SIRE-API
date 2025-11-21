@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Notification from '../models/Notification';
 import User from '../models/User';
-import Client from '../models/Client';
 import Invoice from '../models/Invoice';
 import Payment from '../models/Payment';
 import Project from '../models/Project';
@@ -15,8 +14,7 @@ export const sendNotification = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(400, "All fields are required"));
         }
 
-        const RecipientModel = recipientModel === 'User' ? User : Client;
-        const recipientExists = await (RecipientModel as any).findById(recipient);
+        const recipientExists = await User.findById(recipient);
         if (!recipientExists) {
             return next(errorHandler(404, "Recipient not found"));
         }
@@ -206,7 +204,7 @@ export const sendInvoiceReminder = async (req: Request, res: Response, next: Nex
 
         const notification = new Notification({
             recipient: invoiceDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'email',
             category: 'invoice',
             subject,
@@ -245,7 +243,7 @@ export const sendPaymentConfirmation = async (req: Request, res: Response, next:
 
         const notification = new Notification({
             recipient: paymentDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'email',
             category: 'payment',
             subject,
@@ -285,7 +283,7 @@ export const sendProjectUpdate = async (req: Request, res: Response, next: NextF
         // Notify client
         const clientNotification = new Notification({
             recipient: projectDoc.client._id,
-            recipientModel: 'Client',
+            recipientModel: 'User',
             type: 'in_app',
             category: 'project',
             subject,

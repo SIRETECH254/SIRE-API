@@ -19,7 +19,7 @@
 
 ## User Management Overview
 
-User Management covers internal admin users who operate the system. Users authenticate via JWT and are assigned one of four roles: `super_admin`, `finance`, `project_manager`, `staff`. Role-based access control (RBAC) governs permissions for administration tasks.
+User Management covers all users in the unified system (including former clients). All users authenticate via JWT and are assigned roles from the Role model. Users can have multiple roles assigned. Role-based access control (RBAC) governs permissions throughout the system. The default role for new registrations is "client".
 
 ---
 
@@ -33,8 +33,12 @@ interface IUser {
   lastName: string;
   email: string;
   password: string;                 // hashed, select: false by default
-  role: 'super_admin' | 'finance' | 'project_manager' | 'staff';
-  phone?: string;
+  roles: ObjectId[];                // Array of Role references
+  phone: string;                    // Required field
+  company?: string;                  // Client company name
+  address?: string;                  // Client address
+  city?: string;                    // Client city
+  country?: string;                  // Client country
   isActive: boolean;                // soft-disable account
   emailVerified: boolean;           // verified via OTP in Auth flow
   avatar?: string;
@@ -56,6 +60,7 @@ interface IUser {
   createdAt: Date;
   updatedAt: Date;
   fullName?: string;                // virtual
+  primaryRole?: IRole;              // virtual (first role in array)
 }
 ```
 
@@ -65,8 +70,12 @@ firstName: { required: true, maxlength: 50 }
 lastName:  { required: true, maxlength: 50 }
 email:     { required: true, unique: true, format: email }
 password:  { required: true, minlength: 6, select: false }
-role:      { enum: ['super_admin','finance','project_manager','staff'], default: 'staff' }
-phone:     { optional, unique: true }
+roles:     { type: Array, ref: 'Role' }
+phone:     { required: true, unique: true }
+company:   { optional, maxlength: 100 }
+address:   { optional, maxlength: 200 }
+city:      { optional, maxlength: 50 }
+country:   { optional, maxlength: 50 }
 isActive:  { default: true }
 emailVerified: { default: false }
 ```
@@ -75,8 +84,9 @@ emailVerified: { default: false }
 ```typescript
 // Common indexes
 userSchema.index({ email: 1 });
-userSchema.index({ role: 1 });
+userSchema.index({ roles: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ company: 1 });
 userSchema.index({ email: 1, isActive: 1 });
 ```
 
@@ -92,24 +102,28 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import { errorHandler } from '../middleware/errorHandler';
 import User from '../models/User';
+import Role from '../models/Role';
 import { createInAppNotification } from '../utils/notificationHelper';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 ```
 
 ### Functions Overview
-- `getUserProfile()` - Get current user profile
+- `getUserProfile()` - Get current user profile (with roles populated)
 - `updateUserProfile()` - Update own profile
 - `changePassword()` - Change password
 - `getNotificationPreferences()` - Get notification preferences
 - `updateNotificationPreferences()` - Update notification preferences
-- `getAllUsers()` - Get all users (admin)
-- `getUserById()` - Get single user (admin)
+- `getAllUsers()` - Get all users (admin) with role filtering
+- `getUserById()` - Get single user (admin) with roles populated
 - `updateUser()` - Update any user (admin)
 - `updateUserStatus()` - Update user status (super admin)
-- `setUserAdmin()` - Set user admin role (super admin)
-- `getUserRoles()` - Get user roles (admin)
+- `setUserAdmin()` - Set user admin role (super admin) - DEPRECATED: Use assignRole instead
+- `getUserRoles()` - Get user roles (admin) with roles populated
 - `deleteUser()` - Delete user (super admin)
-- `adminCreateCustomer()` - Admin creates a customer
+- `adminCreateCustomer()` - Admin creates a customer (assigns default "client" role)
+- `assignRole()` - Assign role to user (super admin)
+- `removeRole()` - Remove role from user (super admin)
+- `getClients()` - Get clients (users with client role) (admin)
 
 ### getUserProfile
 **Route:** GET `/api/users/profile`  |  **Access:** Private
@@ -639,6 +653,27 @@ router.get('/:userId/roles', authenticateToken, authorizeRoles(['super_admin', '
  */
 router.delete('/:userId', authenticateToken, requireAdmin, deleteUser);
 
+/**
+ * @route   POST /api/users/:userId/roles
+ * @desc    Assign role to user
+ * @access  Private (Super Admin only)
+ */
+router.post('/:userId/roles', authenticateToken, requireAdmin, assignRole);
+
+/**
+ * @route   DELETE /api/users/:userId/roles/:roleId
+ * @desc    Remove role from user
+ * @access  Private (Super Admin only)
+ */
+router.delete('/:userId/roles/:roleId', authenticateToken, requireAdmin, removeRole);
+
+/**
+ * @route   GET /api/users/clients
+ * @desc    Get clients (users with client role)
+ * @access  Private (Admin)
+ */
+router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
+
 export default router;
 ```
 
@@ -647,34 +682,539 @@ export default router;
 ### Route Details
 
 #### `GET /api/users/profile`
-Returns the current user's profile.
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "phone": "+254712345678",
+      "avatar": "https://cloudinary.com/...",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client",
+          "description": "Client role",
+          "permissions": []
+        }
+      ],
+      "company": "Example Corp",
+      "address": "123 Main St",
+      "city": "Nairobi",
+      "country": "Kenya",
+      "isActive": true,
+      "emailVerified": true,
+      "lastLoginAt": "2025-01-01T12:00:00.000Z",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T12:00:00.000Z"
+    }
+  }
+}
+```
 
 #### `PUT /api/users/profile`
-Update own profile fields. Accepts `multipart/form-data` with optional `avatar` file field (image). When no file is provided, you may still send a JSON body containing `avatar` as a hosted URL.
+**Headers:** `Authorization: Bearer <token>`
+
+**Body (multipart/form-data with avatar upload):**
+```
+firstName=John
+lastName=Smith
+phone=+254712345679
+avatar=<file>
+```
+
+**Body (JSON with existing avatar URL):**
+```json
+{
+  "firstName": "John",
+  "lastName": "Smith",
+  "phone": "+254712345679",
+  "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
+}
+```
+
+**Body (JSON to remove avatar):**
+```json
+{
+  "avatar": null
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Profile updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Smith",
+      "email": "john@example.com",
+      "phone": "+254712345679",
+      "avatar": "https://cloudinary.com/...",
+      "roles": [...],
+      "isActive": true,
+      "emailVerified": true
+    }
+  }
+}
+```
 
 #### `PUT /api/users/change-password`
-Change password after verifying current password.
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "currentPassword": "oldPassword123",
+  "newPassword": "newSecurePassword123"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+#### `GET /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "notificationPreferences": {
+      "email": true,
+      "sms": false,
+      "inApp": true
+    }
+  }
+}
+```
+
+#### `PUT /api/users/notifications`
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:**
+```json
+{
+  "email": true,
+  "sms": false,
+  "inApp": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification preferences updated successfully",
+  "data": {
+    "notificationPreferences": {
+      "email": true,
+      "sms": false,
+      "inApp": true
+    }
+  }
+}
+```
+
+#### `POST /api/users/admin-create`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body:**
+```json
+{
+  "firstName": "Jane",
+  "lastName": "Customer",
+  "email": "jane@customer.com",
+  "phone": "+254712345680",
+  "roleNames": ["client"],
+  "company": "Customer Corp",
+  "address": "456 Main St",
+  "city": "Nairobi",
+  "country": "Kenya"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Customer created successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "Jane",
+      "lastName": "Customer",
+      "email": "jane@customer.com",
+      "phone": "+254712345680",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client"
+        }
+      ],
+      "company": "Customer Corp",
+      "address": "456 Main St",
+      "city": "Nairobi",
+      "country": "Kenya",
+      "isActive": true,
+      "emailVerified": false,
+      "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
 
 #### `GET /api/users`
-List users with pagination and filters.
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by name or email
+- `role` (optional): Filter by role name
+- `status` (optional): Filter by status (active, inactive, verified, unverified)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "_id": "...",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678",
+        "roles": [
+          {
+            "_id": "...",
+            "name": "client",
+            "displayName": "Client"
+          }
+        ],
+        "isActive": true,
+        "emailVerified": true,
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalUsers": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
 
 #### `GET /api/users/:userId`
-Get single user details.
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "phone": "+254712345678",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client",
+          "description": "Client role",
+          "permissions": []
+        }
+      ],
+      "company": "Example Corp",
+      "address": "123 Main St",
+      "city": "Nairobi",
+      "country": "Kenya",
+      "isActive": true,
+      "emailVerified": true,
+      "avatar": "https://cloudinary.com/...",
+      "createdAt": "2025-01-01T00:00:00.000Z",
+      "updatedAt": "2025-01-01T12:00:00.000Z"
+    }
+  }
+}
+```
 
 #### `PUT /api/users/:userId`
-Update any user's profile information (admin only). Allows updating firstName, lastName, phone, email, and avatar. Email updates are validated for format and uniqueness.
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Body (multipart/form-data with avatar upload):**
+```
+firstName=John
+lastName=Smith
+phone=+254712345679
+email=john.smith@example.com
+avatar=<file>
+```
+
+**Body (JSON with existing avatar URL):**
+```json
+{
+  "firstName": "John",
+  "lastName": "Smith",
+  "phone": "+254712345679",
+  "email": "john.smith@example.com",
+  "avatar": "https://res.cloudinary.com/.../profile-photo.jpg"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Smith",
+      "email": "john.smith@example.com",
+      "phone": "+254712345679",
+      "avatar": "https://cloudinary.com/...",
+      "role": "client",
+      "isActive": true
+    }
+  }
+}
+```
 
 #### `PUT /api/users/:userId/status`
-Toggle user active status (super admin only).
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Body:**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User status updated successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "isActive": false,
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client"
+        }
+      ]
+    }
+  }
+}
+```
 
 #### `PUT /api/users/:userId/admin`
-Set user role (super admin only).
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**DEPRECATED:** Use `POST /api/users/:userId/roles` instead.
+
+**Body:**
+```json
+{
+  "role": "project_manager"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User role updated to project_manager successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "role": "project_manager"
+    }
+  }
+}
+```
 
 #### `GET /api/users/:userId/roles`
-Get user roles.
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client",
+          "description": "Client role",
+          "permissions": []
+        },
+        {
+          "_id": "...",
+          "name": "finance",
+          "displayName": "Finance",
+          "description": "Finance role",
+          "permissions": ["invoice:read", "payment:read"]
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `POST /api/users/:userId/roles`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Body:**
+```json
+{
+  "roleName": "finance"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Role assigned successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client"
+        },
+        {
+          "_id": "...",
+          "name": "finance",
+          "displayName": "Finance"
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `DELETE /api/users/:userId/roles/:roleId`
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Role removed successfully",
+  "data": {
+    "user": {
+      "id": "...",
+      "roles": [
+        {
+          "_id": "...",
+          "name": "client",
+          "displayName": "Client"
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `GET /api/users/clients`
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `search` (optional): Search by name, email, or company
+- `status` (optional): Filter by status (active, inactive, verified, unverified)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "clients": [
+      {
+        "_id": "...",
+        "firstName": "Jane",
+        "lastName": "Customer",
+        "email": "jane@customer.com",
+        "phone": "+254712345680",
+        "company": "Customer Corp",
+        "roles": [
+          {
+            "_id": "...",
+            "name": "client",
+            "displayName": "Client"
+          }
+        ],
+        "isActive": true,
+        "emailVerified": true,
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 5,
+      "totalClients": 50,
+      "hasNextPage": true,
+      "hasPrevPage": false
+    }
+  }
+}
+```
 
 #### `DELETE /api/users/:userId`
-Delete user (super admin only).
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User deleted successfully"
+}
+```
 
 ---
 

@@ -15,7 +15,7 @@ const quotationSchema = new Schema<IQuotation>({
   },
   client: {
     type: Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   items: [{

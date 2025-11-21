@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Testimonial from '../models/Testimonial';
-import Client from '../models/Client';
+import User from '../models/User';
+import Role from '../models/Role';
 import Project from '../models/Project';
 import { createInAppNotification } from '../utils/notificationHelper';
 
@@ -35,7 +36,7 @@ export const createTestimonial = async (req: Request, res: Response, next: NextF
             return next(errorHandler(401, "Client authentication required"));
         }
 
-        const client = await Client.findById(clientId);
+        const client = await User.findById(clientId);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -250,7 +251,9 @@ export const getTestimonial = async (req: Request, res: Response, next: NextFunc
         }
 
         // Check if user is admin or owns the testimonial
-        const isAdmin = req.user?.role && ['super_admin', 'finance', 'project_manager'].includes(req.user.role);
+        const userRoles = req.user?.roles || [];
+        const roleNames = Array.isArray(userRoles) ? userRoles.map((r: any) => r.name || r) : [];
+        const isAdmin = roleNames.some((role: string) => ['super_admin', 'finance', 'project_manager'].includes(role));
         const isOwner = testimonial.client.toString() === req.user?._id?.toString();
 
         if (!isAdmin && !isOwner) {
@@ -288,7 +291,9 @@ export const updateTestimonial = async (req: Request, res: Response, next: NextF
         }
 
         // Check if user is admin or owns the testimonial
-        const isAdmin = req.user?.role && ['super_admin', 'finance', 'project_manager'].includes(req.user.role);
+        const userRoles = req.user?.roles || [];
+        const roleNames = Array.isArray(userRoles) ? userRoles.map((r: any) => r.name || r) : [];
+        const isAdmin = roleNames.some((role: string) => ['super_admin', 'finance', 'project_manager'].includes(role));
         const isOwner = testimonial.client.toString() === req.user?._id?.toString();
 
         if (!isAdmin && !isOwner) {
@@ -356,7 +361,9 @@ export const deleteTestimonial = async (req: Request, res: Response, next: NextF
         }
 
         // Check if user is admin or owns the testimonial
-        const isAdmin = req.user?.role && ['super_admin', 'finance', 'project_manager'].includes(req.user.role);
+        const userRoles = req.user?.roles || [];
+        const roleNames = Array.isArray(userRoles) ? userRoles.map((r: any) => r.name || r) : [];
+        const isAdmin = roleNames.some((role: string) => ['super_admin', 'finance', 'project_manager'].includes(role));
         const isOwner = testimonial.client.toString() === req.user?._id?.toString();
 
         if (!isAdmin && !isOwner) {
@@ -403,7 +410,7 @@ export const approveTestimonial = async (req: Request, res: Response, next: Next
         try {
             await createInAppNotification({
                 recipient: (testimonial.client as any)._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'general',
                 subject: 'Testimonial Approved',
                 message: 'Your testimonial has been approved by an admin. It will be published soon.',
@@ -464,7 +471,7 @@ export const publishTestimonial = async (req: Request, res: Response, next: Next
         try {
             await createInAppNotification({
                 recipient: (testimonial.client as any)._id.toString(),
-                recipientModel: 'Client',
+                recipientModel: 'User',
                 category: 'general',
                 subject: 'Testimonial Published',
                 message: 'Your testimonial has been published and is now visible on our website.',
