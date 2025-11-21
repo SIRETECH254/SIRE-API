@@ -1,11 +1,67 @@
 import axios from 'axios';
 
+// Access token cache to reduce OAuth requests
+let accessTokenCache: { token: string; expiresAt: number } | null = null;
+
 const getBaseUrl = () => {
   const env = (process.env.MPESA_ENV || 'sandbox').toLowerCase();
   return env === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke';
 };
 
-export const getAccessToken = async (): Promise<string> => {
+// Create axios instance with proper headers to bypass Incapsula WAF
+const createAxiosInstance = () => {
+  return axios.create({
+    timeout: 30000, // 30 seconds timeout
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Cache-Control': 'no-cache',
+      'Content-Type': 'application/json'
+    }
+  });
+};
+
+// Retry logic with exponential backoff
+const retryRequest = async <T>(
+  requestFn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> => {
+  let lastError: any;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error: any) {
+      lastError = error;
+      
+      // Don't retry on 4xx errors (except 429 rate limit)
+      if (error?.response?.status && 
+          error.response.status >= 400 && 
+          error.response.status < 500 && 
+          error.response.status !== 429) {
+        throw error;
+      }
+      
+      // If it's the last attempt, throw the error
+      if (attempt === maxRetries - 1) {
+        throw error;
+      }
+      
+      // Exponential backoff: 1s, 2s, 4s
+      const delay = baseDelay * Math.pow(2, attempt);
+      console.log(`Daraja request failed, retrying in ${delay}ms... (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError;
+};
+
+export const getAccessToken = async (forceRefresh: boolean = false): Promise<string> => {
   const consumerKey = (process.env.MPESA_CONSUMER_KEY || '').trim();
   const consumerSecret = (process.env.MPESA_CONSUMER_SECRET || '').trim();
 
@@ -13,23 +69,46 @@ export const getAccessToken = async (): Promise<string> => {
     throw new Error('Daraja credentials not configured: Missing MPESA_CONSUMER_KEY or MPESA_CONSUMER_SECRET');
   }
 
+  // Return cached token if still valid (tokens expire in 1 hour, we'll use for 50 minutes)
+  if (!forceRefresh && accessTokenCache && accessTokenCache.expiresAt > Date.now()) {
+    return accessTokenCache.token;
+  }
+
   const base = getBaseUrl();
   const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+  const axiosInstance = createAxiosInstance();
 
   try {
-    const response = await axios.get(
-      `${base}/oauth/v1/generate?grant_type=client_credentials`,
-      { headers: { Authorization: `Basic ${auth}` } }
-    );
+    const response = await retryRequest(async () => {
+      return await axiosInstance.get(
+        `${base}/oauth/v1/generate?grant_type=client_credentials`,
+        { 
+          headers: { 
+            Authorization: `Basic ${auth}`,
+            'Content-Type': 'application/json'
+          } 
+        }
+      );
+    });
     
     if (!response.data?.access_token) {
       throw new Error('Daraja OAuth response missing access_token');
     }
     
+    // Cache the token (expires in 50 minutes to be safe)
+    accessTokenCache = {
+      token: response.data.access_token,
+      expiresAt: Date.now() + (50 * 60 * 1000) // 50 minutes
+    };
+    
     return response.data.access_token;
   } catch (err: any) {
     const status = err?.response?.status;
     const data = err?.response?.data;
+    
+    // Clear cache on error
+    accessTokenCache = null;
+    
     const message = `Daraja OAuth failed${status ? ` (HTTP ${status})` : ''}`;
     const details = typeof data === 'object' ? JSON.stringify(data) : (data || err.message);
     const error = new Error(`${message}: ${details}`);
@@ -88,9 +167,20 @@ export const initiateStkPush = async (params: StkPushParams): Promise<StkPushRes
     TransactionDesc: 'Invoice payment'
   };
 
+  const axiosInstance = createAxiosInstance();
+
   try {
-    const resp = await axios.post(`${base}/mpesa/stkpush/v1/processrequest`, payload, {
-      headers: { Authorization: `Bearer ${accessToken}` }
+    const resp = await retryRequest(async () => {
+      return await axiosInstance.post(
+        `${base}/mpesa/stkpush/v1/processrequest`, 
+        payload, 
+        {
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
     });
 
     return {
@@ -179,17 +269,26 @@ export const queryStkPushStatus = async (params: StkQueryParams): Promise<StkQue
   const timestamp = buildTimestamp();
   const password = buildPassword(resolvedShortCode, resolvedPasskey, timestamp);
 
+  const axiosInstance = createAxiosInstance();
+
   try {
-    const resp = await axios.post(
-      `${base}/mpesa/stkpushquery/v1/query`,
-      {
-        BusinessShortCode: Number(resolvedShortCode),
-        Password: password,
-        Timestamp: timestamp,
-        CheckoutRequestID: params.checkoutRequestId
-      },
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    const resp = await retryRequest(async () => {
+      return await axiosInstance.post(
+        `${base}/mpesa/stkpushquery/v1/query`,
+        {
+          BusinessShortCode: Number(resolvedShortCode),
+          Password: password,
+          Timestamp: timestamp,
+          CheckoutRequestID: params.checkoutRequestId
+        },
+        { 
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          } 
+        }
+      );
+    });
 
     return {
       ok: true,
