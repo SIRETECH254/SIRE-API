@@ -31,7 +31,8 @@ const allowedOrigins = [
   'http://localhost:8082',
   'http://localhost:4000',
   'https://sire-api.onrender.com',
-  'https://sire-admin.onrender.com'
+  'https://sire-admin.onrender.com',
+  'https://sire-client.onrender.com'
 ];
 
 // CORS middleware configuration
