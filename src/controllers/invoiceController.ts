@@ -4,6 +4,7 @@ import Invoice from '../models/Invoice';
 import Quotation from '../models/Quotation';
 import Project from '../models/Project';
 import Payment from '../models/Payment';
+import User from '../models/User';
 import { generateInvoicePDF } from '../utils/generatePDF';
 import { v2 as cloudinary } from 'cloudinary';
 import { sendInvoiceEmail } from '../services/external/emailService';
@@ -188,6 +189,122 @@ export const getAllInvoices = async (req: Request, res: Response, next: NextFunc
     } catch (error: any) {
         console.error('Get all invoices error:', error);
         next(errorHandler(500, "Server error while fetching invoices"));
+    }
+};
+
+export const getInvoiceStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const total = await Invoice.countDocuments();
+
+        const byStatus = {
+            draft: await Invoice.countDocuments({ status: 'draft' }),
+            sent: await Invoice.countDocuments({ status: 'sent' }),
+            paid: await Invoice.countDocuments({ status: 'paid' }),
+            partiallyPaid: await Invoice.countDocuments({ status: 'partially_paid' }),
+            overdue: await Invoice.countDocuments({ status: 'overdue' }),
+            cancelled: await Invoice.countDocuments({ status: 'cancelled' })
+        };
+
+        // Calculate total amount, paid amount, and outstanding amount
+        const allInvoices = await Invoice.find({});
+        const totalAmount = allInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+        const paidAmount = allInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
+        const outstandingAmount = allInvoices
+            .filter(inv => ['sent', 'partially_paid', 'overdue'].includes(inv.status))
+            .reduce((sum, inv) => sum + (inv.totalAmount - inv.paidAmount), 0);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                stats: {
+                    total,
+                    byStatus,
+                    totalAmount,
+                    paidAmount,
+                    outstandingAmount
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get invoice stats error:', error);
+        next(errorHandler(500, "Server error while fetching invoice statistics"));
+    }
+};
+
+export const getOverdueInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const invoices = await Invoice.find({
+            dueDate: { $lt: today },
+            status: { $nin: ['paid', 'cancelled'] }
+        })
+            .populate('client', 'firstName lastName email company')
+            .populate('quotation', 'quotationNumber')
+            .populate('createdBy', 'firstName lastName email')
+            .sort({ dueDate: 'asc' });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                invoices
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get overdue invoices error:', error);
+        next(errorHandler(500, "Server error while fetching overdue invoices"));
+    }
+};
+
+export const getClientInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { clientId } = req.params as any;
+        const { page = 1, limit = 10, status } = req.query as any;
+
+        // Validate client exists
+        const client = await User.findById(clientId);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
+
+        const query: any = { client: clientId };
+
+        if (status) {
+            query.status = status;
+        }
+
+        const options = { page: parseInt(page), limit: parseInt(limit) };
+
+        const invoices = await Invoice.find(query)
+            .populate('client', 'firstName lastName email company')
+            .populate('quotation', 'quotationNumber')
+            .populate('createdBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await Invoice.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                invoices,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalInvoices: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get client invoices error:', error);
+        next(errorHandler(500, "Server error while fetching client invoices"));
     }
 };
 
