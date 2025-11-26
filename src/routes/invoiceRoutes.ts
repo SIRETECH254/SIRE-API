@@ -2,6 +2,9 @@ import express from 'express';
 import {
     createInvoice,
     getAllInvoices,
+    getInvoiceStats,
+    getOverdueInvoices,
+    getClientInvoices,
     getInvoice,
     updateInvoice,
     deleteInvoice,
@@ -197,6 +200,13 @@ const router = express.Router();
  */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createInvoice);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllInvoices);
+
+// Specific routes must come before dynamic :invoiceId route
+router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getInvoiceStats);
+router.get('/overdue', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getOverdueInvoices);
+router.get('/client/:clientId', authenticateToken, getClientInvoices);
+
+// Dynamic routes come last
 router.get('/:invoiceId', authenticateToken, getInvoice);
 router.put('/:invoiceId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateInvoice);
 router.delete('/:invoiceId', authenticateToken, authorizeRoles(['super_admin']), deleteInvoice);

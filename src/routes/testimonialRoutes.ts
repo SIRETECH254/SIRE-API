@@ -3,6 +3,7 @@ import {
     createTestimonial,
     getAllTestimonials,
     getPublishedTestimonials,
+    getMyTestimonials,
     getTestimonial,
     updateTestimonial,
     deleteTestimonial,
@@ -27,6 +28,13 @@ router.post('/', authenticateToken, createTestimonial);
  * @access  Public
  */
 router.get('/published', getPublishedTestimonials);
+
+/**
+ * @route   GET /api/testimonials/my
+ * @desc    Get client's own testimonials
+ * @access  Private (Client)
+ */
+router.get('/my', authenticateToken, getMyTestimonials);
 
 /**
  * @route   GET /api/testimonials

@@ -234,6 +234,53 @@ export const getPublishedTestimonials = async (req: Request, res: Response, next
     }
 };
 
+// @desc    Get client's own testimonials
+// @route   GET /api/testimonials/my
+// @access  Private (Client)
+export const getMyTestimonials = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const clientId = req.user?._id;
+        if (!clientId) {
+            return next(errorHandler(401, "Client authentication required"));
+        }
+
+        const { page = 1, limit = 10 } = req.query;
+
+        const options = {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string)
+        };
+
+        const testimonials = await Testimonial.find({ client: clientId })
+            .populate('client', 'firstName lastName email company')
+            .populate('project', 'title projectNumber')
+            .populate('approvedBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await Testimonial.countDocuments({ client: clientId });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                testimonials: testimonials,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalTestimonials: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get my testimonials error:', error);
+        next(errorHandler(500, "Server error while fetching testimonials"));
+    }
+};
+
 // @desc    Get single testimonial
 // @route   GET /api/testimonials/:id
 // @access  Private (Admin or Client owner)

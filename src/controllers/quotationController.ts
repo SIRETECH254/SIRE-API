@@ -214,6 +214,55 @@ export const getAllQuotations = async (req: Request, res: Response, next: NextFu
     }
 };
 
+export const getQuotationsByClient = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { clientId } = req.params as any;
+        const { page = 1, limit = 10, status } = req.query as any;
+
+        // Validate client exists
+        const client = await User.findById(clientId);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
+
+        const query: any = { client: clientId };
+
+        if (status) {
+            query.status = status;
+        }
+
+        const options = { page: parseInt(page), limit: parseInt(limit) };
+
+        const quotations = await Quotation.find(query)
+            .populate('project', 'title description projectNumber')
+            .populate('client', 'firstName lastName email company')
+            .populate('createdBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await Quotation.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                quotations,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalQuotations: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get quotations by client error:', error);
+        next(errorHandler(500, "Server error while fetching quotations"));
+    }
+};
+
 export const getQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { quotationId } = req.params as any;
