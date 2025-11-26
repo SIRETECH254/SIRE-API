@@ -395,3 +395,58 @@ export const archiveMessage = async (req: Request, res: Response, next: NextFunc
     }
 };
 
+// @desc    Get my contact messages (Client only)
+// @route   GET /api/contact/my-messages
+// @access  Private (Client)
+export const getMyMessages = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        if (!req.user || !req.user.email) {
+            return next(errorHandler(401, "Authentication required"));
+        }
+
+        const { page = 1, limit = 10, status } = req.query;
+
+        // Build query to filter messages by authenticated user's email
+        const query: any = {
+            email: req.user.email.toLowerCase()
+        };
+
+        // Filter by status if provided
+        if (status) {
+            query.status = status;
+        }
+
+        const options = {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string)
+        };
+
+        // Fetch messages for the authenticated client
+        const messages = await ContactMessage.find(query)
+            .populate('repliedBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await ContactMessage.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                messages: messages,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalMessages: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get my messages error:', error);
+        next(errorHandler(500, "Server error while fetching your contact messages"));
+    }
+};
+

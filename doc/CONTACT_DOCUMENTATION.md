@@ -291,6 +291,71 @@ export const submitContactMessage = async (req: Request, res: Response, next: Ne
 };
 ```
 
+#### `getMyMessages(query)`
+**Purpose:** Get contact messages for authenticated client (Client only)
+**Access:** Client users only
+**Features:**
+- Pagination
+- Filter by status
+- Automatically filters by authenticated user's email
+- Sort by creation date (newest first)
+**Response:** Paginated contact message list for the client
+
+**Controller Implementation:**
+```typescript
+export const getMyMessages = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        if (!req.user || !req.user.email) {
+            return next(errorHandler(401, "Authentication required"));
+        }
+
+        const { page = 1, limit = 10, status } = req.query;
+
+        // Build query to filter messages by authenticated user's email
+        const query: any = {
+            email: req.user.email.toLowerCase()
+        };
+
+        // Filter by status if provided
+        if (status) {
+            query.status = status;
+        }
+
+        const options = {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string)
+        };
+
+        // Fetch messages for the authenticated client
+        const messages = await ContactMessage.find(query)
+            .populate('repliedBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await ContactMessage.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                messages: messages,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalMessages: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get my messages error:', error);
+        next(errorHandler(500, "Server error while fetching your contact messages"));
+    }
+};
+```
+
 #### `getAllMessages(query)`
 **Purpose:** Get all contact messages with filtering (Admin only)
 **Access:** Admin users only
@@ -641,6 +706,9 @@ export const archiveMessage = async (req: Request, res: Response, next: NextFunc
 // Public Routes
 POST   /                          // Submit contact message
 
+// Client Routes
+GET    /my-messages               // Get my messages (client)
+
 // Admin Routes
 GET    /                          // Get all messages (admin)
 GET    /:id                       // Get single message (admin)
@@ -675,6 +743,13 @@ const router = express.Router();
  * @access  Public
  */
 router.post('/', submitContactMessage);
+
+/**
+ * @route   GET /api/contact/my-messages
+ * @desc    Get my contact messages (client)
+ * @access  Private (Client)
+ */
+router.get('/my-messages', authenticateToken, authorizeRoles(['client']), getMyMessages);
 
 /**
  * @route   GET /api/contact
@@ -749,6 +824,50 @@ export default router;
       "subject": "Inquiry about services",
       "status": "unread",
       "createdAt": "2025-01-01T00:00:00.000Z"
+    }
+  }
+}
+```
+
+#### `GET /api/contact/my-messages`
+**Headers:** `Authorization: Bearer <client_token>`
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 10)
+- `status` (optional): Filter by status (unread, read, replied, archived)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "messages": [
+      {
+        "_id": "...",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "phone": "+254712345678",
+        "subject": "Inquiry about services",
+        "message": "I would like to know more...",
+        "status": "replied",
+        "reply": "Thank you for your inquiry...",
+        "repliedBy": {
+          "_id": "...",
+          "firstName": "Admin",
+          "lastName": "User",
+          "email": "admin@example.com"
+        },
+        "repliedAt": "2025-01-01T12:00:00.000Z",
+        "createdAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "currentPage": 1,
+      "totalPages": 3,
+      "totalMessages": 25,
+      "hasNextPage": true,
+      "hasPrevPage": false
     }
   }
 }
@@ -859,19 +978,25 @@ curl -X POST http://localhost:5000/api/contact \
   }'
 ```
 
-#### 2. Admin Get All Messages
+#### 2. Client Get My Messages
+```bash
+curl -X GET "http://localhost:5000/api/contact/my-messages?page=1&limit=10&status=replied" \
+  -H "Authorization: Bearer <client_access_token>"
+```
+
+#### 3. Admin Get All Messages
 ```bash
 curl -X GET "http://localhost:5000/api/contact?page=1&limit=10&status=unread" \
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
-#### 3. Admin Get Single Message
+#### 4. Admin Get Single Message
 ```bash
 curl -X GET http://localhost:5000/api/contact/<messageId> \
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
-#### 4. Admin Reply to Message
+#### 5. Admin Reply to Message
 ```bash
 curl -X POST http://localhost:5000/api/contact/<messageId>/reply \
   -H "Content-Type: application/json" \
@@ -881,7 +1006,7 @@ curl -X POST http://localhost:5000/api/contact/<messageId>/reply \
   }'
 ```
 
-#### 5. Admin Archive Message
+#### 6. Admin Archive Message
 ```bash
 curl -X PATCH http://localhost:5000/api/contact/<messageId>/archive \
   -H "Authorization: Bearer <admin_access_token>"
@@ -893,7 +1018,8 @@ curl -X PATCH http://localhost:5000/api/contact/<messageId>/archive \
 
 ### Access Control
 - **Public Submission** - Anyone can submit contact messages
-- **Admin Only Access** - Only admins can view and manage messages
+- **Client Access** - Clients can view their own messages (filtered by email)
+- **Admin Only Access** - Only admins can view and manage all messages
 - **Reply Control** - Only admins can reply to messages
 - **Deletion Control** - Only admins can delete messages
 

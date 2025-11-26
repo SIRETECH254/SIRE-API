@@ -6,7 +6,8 @@ import {
     markAsRead,
     replyToMessage,
     deleteMessage,
-    archiveMessage
+    archiveMessage,
+    getMyMessages
 } from '../controllers/contactController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -18,6 +19,13 @@ const router = express.Router();
  * @access  Public
  */
 router.post('/', submitContactMessage);
+
+/**
+ * @route   GET /api/contact/my-messages
+ * @desc    Get my contact messages (client)
+ * @access  Private (Client)
+ */
+router.get('/my-messages', authenticateToken, authorizeRoles(['client']), getMyMessages);
 
 /**
  * @route   GET /api/contact
