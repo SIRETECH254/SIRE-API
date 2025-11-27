@@ -178,11 +178,15 @@ export const getAllMessages = async (req: Request, res: Response, next: NextFunc
     }
 };
 
-// @desc    Get single contact message (Admin only)
+// @desc    Get single contact message (Admin or Client - own messages only)
 // @route   GET /api/contact/:messageId
-// @access  Private (Admin)
+// @access  Private (Admin or Client)
 export const getMessage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+        if (!req.user) {
+            return next(errorHandler(401, "Authentication required"));
+        }
+
         const { messageId } = req.params;
 
         const message = await ContactMessage.findById(messageId)
@@ -190,6 +194,24 @@ export const getMessage = async (req: Request, res: Response, next: NextFunction
 
         if (!message) {
             return next(errorHandler(404, "Contact message not found"));
+        }
+
+        // Check if user is admin
+        const userRoleNames = req.user.roleNames || [];
+        const isAdmin = userRoleNames.some(role => 
+            ['super_admin', 'finance', 'project_manager'].includes(role)
+        );
+
+        // If not admin, check if message belongs to the client
+        if (!isAdmin) {
+            if (!req.user.email) {
+                return next(errorHandler(403, "Access denied. You can only view your own messages."));
+            }
+
+            // Check if message email matches authenticated user's email
+            if (message.email.toLowerCase() !== req.user.email.toLowerCase()) {
+                return next(errorHandler(403, "Access denied. You can only view your own messages."));
+            }
         }
 
         // Mark as read if currently unread

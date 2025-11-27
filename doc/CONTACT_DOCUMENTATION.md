@@ -437,9 +437,10 @@ export const getAllMessages = async (req: Request, res: Response, next: NextFunc
 
 #### `getMessage(messageId)`
 **Purpose:** Get single contact message details
-**Access:** Admin users only
+**Access:** Admin users (any message) or Client users (own messages only)
 **Process:**
 - Fetch message with populated references
+- Check authorization: Admins can view any message, Clients can only view their own messages
 - Mark as read if currently unread
 **Response:** Complete contact message with reply details
 
@@ -447,6 +448,10 @@ export const getAllMessages = async (req: Request, res: Response, next: NextFunc
 ```typescript
 export const getMessage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
+        if (!req.user) {
+            return next(errorHandler(401, "Authentication required"));
+        }
+
         const { messageId } = req.params;
 
         const message = await ContactMessage.findById(messageId)
@@ -454,6 +459,24 @@ export const getMessage = async (req: Request, res: Response, next: NextFunction
 
         if (!message) {
             return next(errorHandler(404, "Contact message not found"));
+        }
+
+        // Check if user is admin
+        const userRoleNames = req.user.roleNames || [];
+        const isAdmin = userRoleNames.some(role => 
+            ['super_admin', 'finance', 'project_manager'].includes(role)
+        );
+
+        // If not admin, check if message belongs to the client
+        if (!isAdmin) {
+            if (!req.user.email) {
+                return next(errorHandler(403, "Access denied. You can only view your own messages."));
+            }
+
+            // Check if message email matches authenticated user's email
+            if (message.email.toLowerCase() !== req.user.email.toLowerCase()) {
+                return next(errorHandler(403, "Access denied. You can only view your own messages."));
+            }
         }
 
         // Mark as read if currently unread
@@ -711,7 +734,7 @@ GET    /my-messages               // Get my messages (client)
 
 // Admin Routes
 GET    /                          // Get all messages (admin)
-GET    /:id                       // Get single message (admin)
+GET    /:id                       // Get single message (admin or client - own messages only)
 PATCH  /:id/read                  // Mark as read (admin)
 POST   /:id/reply                 // Reply to message (admin)
 DELETE /:id                       // Delete message (admin)
@@ -760,10 +783,10 @@ router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'pr
 
 /**
  * @route   GET /api/contact/:messageId
- * @desc    Get single contact message (admin)
- * @access  Private (Admin only)
+ * @desc    Get single contact message (admin or client - own messages only)
+ * @access  Private (Admin or Client)
  */
-router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getMessage);
+router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager', 'client']), getMessage);
 
 /**
  * @route   PATCH /api/contact/:messageId/read
@@ -990,13 +1013,19 @@ curl -X GET "http://localhost:5000/api/contact?page=1&limit=10&status=unread" \
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
-#### 4. Admin Get Single Message
+#### 4. Client Get Single Message (Own Message)
+```bash
+curl -X GET http://localhost:5000/api/contact/<messageId> \
+  -H "Authorization: Bearer <client_access_token>"
+```
+
+#### 5. Admin Get Single Message
 ```bash
 curl -X GET http://localhost:5000/api/contact/<messageId> \
   -H "Authorization: Bearer <admin_access_token>"
 ```
 
-#### 5. Admin Reply to Message
+#### 6. Admin Reply to Message
 ```bash
 curl -X POST http://localhost:5000/api/contact/<messageId>/reply \
   -H "Content-Type: application/json" \
@@ -1006,7 +1035,7 @@ curl -X POST http://localhost:5000/api/contact/<messageId>/reply \
   }'
 ```
 
-#### 6. Admin Archive Message
+#### 7. Admin Archive Message
 ```bash
 curl -X PATCH http://localhost:5000/api/contact/<messageId>/archive \
   -H "Authorization: Bearer <admin_access_token>"
@@ -1019,7 +1048,9 @@ curl -X PATCH http://localhost:5000/api/contact/<messageId>/archive \
 ### Access Control
 - **Public Submission** - Anyone can submit contact messages
 - **Client Access** - Clients can view their own messages (filtered by email)
+  - Clients can view single messages only if the message belongs to them
 - **Admin Only Access** - Only admins can view and manage all messages
+  - Admins can view any message regardless of sender
 - **Reply Control** - Only admins can reply to messages
 - **Deletion Control** - Only admins can delete messages
 

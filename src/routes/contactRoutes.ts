@@ -36,10 +36,10 @@ router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'pr
 
 /**
  * @route   GET /api/contact/:messageId
- * @desc    Get single contact message (admin)
- * @access  Private (Admin only)
+ * @desc    Get single contact message (admin or client - own messages only)
+ * @access  Private (Admin or Client)
  */
-router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getMessage);
+router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager', 'client']), getMessage);
 
 /**
  * @route   PATCH /api/contact/:messageId/read
