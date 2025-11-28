@@ -6,7 +6,8 @@ import {
     markAsRead,
     replyToMessage,
     deleteMessage,
-    archiveMessage
+    archiveMessage,
+    getMyMessages
 } from '../controllers/contactController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
@@ -20,6 +21,13 @@ const router = express.Router();
 router.post('/', submitContactMessage);
 
 /**
+ * @route   GET /api/contact/my-messages
+ * @desc    Get my contact messages (client)
+ * @access  Private (Client)
+ */
+router.get('/my-messages', authenticateToken, authorizeRoles(['client']), getMyMessages);
+
+/**
  * @route   GET /api/contact
  * @desc    Get all contact messages (admin)
  * @access  Private (Admin only)
@@ -28,10 +36,10 @@ router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'pr
 
 /**
  * @route   GET /api/contact/:messageId
- * @desc    Get single contact message (admin)
- * @access  Private (Admin only)
+ * @desc    Get single contact message (admin or client - own messages only)
+ * @access  Private (Admin or Client)
  */
-router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getMessage);
+router.get('/:messageId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager', 'client']), getMessage);
 
 /**
  * @route   PATCH /api/contact/:messageId/read
