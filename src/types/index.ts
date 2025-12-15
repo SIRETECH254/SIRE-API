@@ -164,6 +164,7 @@ export interface IQuotation extends Document {
   notes?: string;
   createdBy: Types.ObjectId; // Reference to User
   convertedToInvoice?: Types.ObjectId; // Reference to Invoice
+  pdfUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -5,10 +5,9 @@ import User from '../models/User';
 import Role from '../models/Role';
 import Invoice from '../models/Invoice';
 import Project from '../models/Project';
-import { generateQuotationPDF } from '../utils/generatePDF';
-import { v2 as cloudinary } from 'cloudinary';
 import { sendQuotationEmail } from '../services/external/emailService';
 import { createInAppNotification } from '../utils/notificationHelper';
+import { uploadQuotationPDF } from '../utils/pdfUpload';
 
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -74,9 +73,12 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         // Calculate subtotal
         const subtotal = itemsWithTotals.reduce((sum, item) => sum + item.total, 0);
 
-        // Calculate total amount
-        const taxAmount = tax || 0;
-        const discountAmount = discount || 0;
+        // Calculate tax and discount as percentages of subtotal
+        // If tax is 10, it means 10% of subtotal
+        const taxPercentage = tax || 0;
+        const discountPercentage = discount || 0;
+        const taxAmount = subtotal * (taxPercentage / 100);
+        const discountAmount = subtotal * (discountPercentage / 100);
         const totalAmount = subtotal + taxAmount - discountAmount;
 
         // Generate quotation number
@@ -110,6 +112,18 @@ export const createQuotation = async (req: Request, res: Response, next: NextFun
         // Populate references
         await quotation.populate('project', 'title description projectNumber');
         await quotation.populate('client', 'firstName lastName email company');
+        await quotation.populate('createdBy', 'firstName lastName email');
+
+        // Generate and upload PDF
+        try {
+            const pdfUrl = await uploadQuotationPDF(quotation);
+            quotation.pdfUrl = pdfUrl;
+            await quotation.save();
+        } catch (pdfError: any) {
+            console.error('Error generating PDF for quotation:', pdfError);
+            // Don't fail the request if PDF generation fails
+            // PDF can be regenerated later using the generateQuotationPDFController endpoint
+        }
 
         // Send notification to client
         try {
@@ -301,13 +315,53 @@ export const updateQuotation = async (req: Request, res: Response, next: NextFun
 
         // Note: project reference cannot be changed
         // projectTitle and projectDescription are inherited from project
-        if (items) quotation.items = items;
-        if (tax !== undefined) quotation.tax = tax;
-        if (discount !== undefined) quotation.discount = discount;
+        if (items) {
+            quotation.items = items;
+            // Recalculate item totals
+            quotation.items.forEach((item: any) => {
+                item.total = item.quantity * item.unitPrice;
+            });
+        }
+
+        // Recalculate subtotal
+        const subtotal = quotation.items.reduce((sum: number, item: any) => sum + item.total, 0);
+        quotation.subtotal = subtotal;
+
+        // Calculate tax and discount as percentages of subtotal
+        // If tax is 10, it means 10% of subtotal
+        if (tax !== undefined) {
+            const taxPercentage = tax;
+            quotation.tax = subtotal * (taxPercentage / 100);
+        }
+        if (discount !== undefined) {
+            const discountPercentage = discount;
+            quotation.discount = subtotal * (discountPercentage / 100);
+        }
+
+        // Recalculate total amount
+        quotation.totalAmount = quotation.subtotal + quotation.tax - quotation.discount;
+
         if (validUntil) quotation.validUntil = validUntil;
-        if (notes) quotation.notes = notes;
+        if (notes !== undefined) quotation.notes = notes;
 
         await quotation.save();
+
+        // Always regenerate PDF whenever update API is called, even if nothing changed
+        // Populate references for PDF generation
+        await quotation.populate('project', 'title description projectNumber');
+        await quotation.populate('client', 'firstName lastName email company phone address city country');
+        await quotation.populate('createdBy', 'firstName lastName email');
+
+        // Regenerate and upload PDF (always generate new PDF on any update)
+        try {
+            const pdfUrl = await uploadQuotationPDF(quotation);
+            quotation.pdfUrl = pdfUrl;
+            await quotation.save();
+        } catch (pdfError: any) {
+            console.error('Error regenerating PDF for quotation:', pdfError);
+            // Don't fail the request if PDF generation fails
+            // PDF can be regenerated later using the generateQuotationPDFController endpoint
+        }
 
         res.status(200).json({ success: true, message: "Quotation updated successfully", data: { quotation } });
 
@@ -573,65 +627,12 @@ export const generateQuotationPDFController = async (req: Request, res: Response
             return next(errorHandler(404, "Quotation not found"));
         }
 
-        // Generate PDF
-        const pdfBuffer = await generateQuotationPDF(quotation);
+        // Generate and upload PDF using helper function
+        const pdfUrl = await uploadQuotationPDF(quotation);
 
-        // Upload PDF to Cloudinary as raw file using stream
-        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
-        
-        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
-                {
-                    folder: 'sire-tech/quotations',
-                    resource_type: 'raw',
-                    public_id: fileName,
-                    type: 'upload',
-                    overwrite: true,
-                    invalidate: true,
-                    access_mode: 'public',
-                    use_filename: true,
-                    unique_filename: false
-                },
-                (error, result) => {
-                    if (error) {
-                        console.error('Cloudinary upload error:', error);
-                        reject(error);
-                    } else if (result) {
-                        resolve({
-                            secure_url: result.secure_url || '',
-                            url: result.url || '',
-                            public_id: result.public_id || ''
-                        });
-                    } else {
-                        reject(new Error('Upload failed: No result returned'));
-                    }
-                }
-            );
-            uploadStream.end(pdfBuffer);
-        });
-
-        // Construct the correct URL for raw files with .pdf extension
-        // Cloudinary returns secure_url for raw files, but we need to ensure .pdf extension is included
-        let pdfUrl = uploadResult.secure_url || uploadResult.url;
-        
-        if (!pdfUrl) {
-            // Fallback: construct URL manually with .pdf extension
-            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
-                ? uploadResult.public_id 
-                : `sire-tech/quotations/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
-        } else {
-            // Ensure .pdf extension is present in the URL for browser viewing
-            // Cloudinary URLs might not include the extension, so we add it
-            if (!pdfUrl.includes('.pdf')) {
-                // If URL has query params, insert .pdf before the query
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
-        }
+        // Update quotation with PDF URL
+        quotation.pdfUrl = pdfUrl;
+        await quotation.save();
 
         res.status(200).json({
             success: true,
@@ -667,68 +668,30 @@ export const sendQuotation = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "Client email is required to send quotation"));
         }
 
-        // Generate PDF
-        const pdfBuffer = await generateQuotationPDF(quotation);
+        // Populate references for PDF generation if needed
+        await quotation.populate('client', 'firstName lastName email company phone address city country');
+        await quotation.populate('project', 'title description projectNumber');
+        await quotation.populate('createdBy', 'firstName lastName email');
 
-        // Upload PDF to Cloudinary
-        const fileName = `quotation-${quotation.quotationNumber || quotationId}`;
-        
-        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
-                {
-                    folder: 'sire-tech/quotations',
-                    resource_type: 'raw',
-                    public_id: fileName,
-                    type: 'upload',
-                    overwrite: true,
-                    invalidate: true,
-                    access_mode: 'public',
-                    use_filename: true,
-                    unique_filename: false
-                },
-                (error, result) => {
-                    if (error) {
-                        console.error('Cloudinary upload error:', error);
-                        reject(error);
-                    } else if (result) {
-                        resolve({
-                            secure_url: result.secure_url || '',
-                            url: result.url || '',
-                            public_id: result.public_id || ''
-                        });
-                    } else {
-                        reject(new Error('Upload failed: No result returned'));
-                    }
-                }
-            );
-            uploadStream.end(pdfBuffer);
-        });
-
-        // Construct PDF URL with .pdf extension
-        let pdfUrl = uploadResult.secure_url || uploadResult.url;
-        if (!pdfUrl) {
-            const publicId = uploadResult.public_id.includes('sire-tech/quotations') 
-                ? uploadResult.public_id 
-                : `sire-tech/quotations/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
+        // Use existing pdfUrl if available, otherwise generate and upload using helper
+        let pdfUrl: string;
+        if (quotation.pdfUrl) {
+            pdfUrl = quotation.pdfUrl;
         } else {
-            if (!pdfUrl.includes('.pdf')) {
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
-        }
-
-        // Send email to client
-        await sendQuotationEmail(client.email, quotation, pdfUrl, pdfBuffer);
-
-        // Update quotation status to 'sent'
-        if (quotation.status === 'pending') {
-            quotation.status = 'sent';
+            pdfUrl = await uploadQuotationPDF(quotation);
+            quotation.pdfUrl = pdfUrl;
             await quotation.save();
         }
+
+        // Send email to client (only pdfUrl, no buffer/attachment)
+        await sendQuotationEmail(client.email, quotation, pdfUrl);
+
+        // Update quotation status to 'sent' and save PDF URL
+        if (quotation.status === 'pending') {
+            quotation.status = 'sent';
+        }
+        quotation.pdfUrl = pdfUrl;
+        await quotation.save();
 
         // Send notification to client
         try {
