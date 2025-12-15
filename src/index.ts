@@ -29,6 +29,9 @@ const PORT = process.env.PORT || 4000;
 const allowedOrigins = [
   'http://localhost:8081',
   'http://localhost:8082',
+  'http://localhost:8083',
+  'http://localhost:8084',
+  'http://localhost:8085',
   'http://localhost:4000',
   'https://sire-api.onrender.com',
   'https://sire-admin.onrender.com',

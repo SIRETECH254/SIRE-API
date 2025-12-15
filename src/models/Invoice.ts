@@ -94,6 +94,12 @@ const invoiceSchema = new Schema<IInvoice>({
     trim: true,
     maxlength: [500, 'Notes cannot exceed 500 characters']
   },
+  pdf: {
+    url: {
+      type: String,
+      trim: true
+    }
+  },
   createdBy: {
     type: Schema.Types.ObjectId,
     ref: 'User',

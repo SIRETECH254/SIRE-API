@@ -1,5 +1,6 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { generateQuotationPDF } from './generatePDF';
+import { generateInvoicePDF } from './generatePDF';
 import type { IQuotation } from '../types';
 
 /**
@@ -78,6 +79,69 @@ export const uploadQuotationPDF = async (quotation: any): Promise<string> => {
         return pdfUrl;
     } catch (error: any) {
         console.error('Error uploading quotation PDF:', error);
+        throw error;
+    }
+};
+
+/**
+ * Generate PDF for invoice and upload to Cloudinary
+ * @param invoice - Invoice document with populated references
+ * @returns Promise<string> - PDF URL
+ */
+export const uploadInvoicePDF = async (invoice: any, existingBuffer?: Buffer): Promise<string> => {
+    try {
+        const pdfBuffer = existingBuffer || await generateInvoicePDF(invoice);
+        const fileName = `invoice-${invoice.invoiceNumber || invoice._id}.pdf`;
+
+        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string; version?: number }>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'sire-tech/invoices',
+                    resource_type: 'raw',
+                    public_id: fileName,
+                    type: 'upload',
+                    overwrite: true,
+                    invalidate: true,
+                    access_mode: 'public'
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload error:', error);
+                        reject(error);
+                    } else if (result) {
+                        resolve({
+                            secure_url: result.secure_url || '',
+                            url: result.url || '',
+                            public_id: result.public_id || '',
+                            version: result.version
+                        });
+                    } else {
+                        reject(new Error('Upload failed: No result returned'));
+                    }
+                }
+            );
+            uploadStream.end(pdfBuffer);
+        });
+
+        let pdfUrl = uploadResult.secure_url;
+
+        if (!pdfUrl) {
+            const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+            const publicId = uploadResult.public_id || `sire-tech/invoices/${fileName}`;
+            const version = uploadResult.version ? `v${uploadResult.version}/` : '';
+            const finalPublicId = publicId.endsWith('.pdf') ? publicId : `${publicId}.pdf`;
+            pdfUrl = `https://res.cloudinary.com/${cloudName}/raw/upload/${version}${finalPublicId}`;
+        } else {
+            const urlParts = pdfUrl.split('?');
+            const urlWithoutQuery = urlParts[0];
+            if (urlWithoutQuery && !urlWithoutQuery.toLowerCase().endsWith('.pdf')) {
+                pdfUrl = pdfUrl.includes('?') ? pdfUrl.replace('?', '.pdf?') : `${pdfUrl}.pdf`;
+            }
+        }
+
+        return pdfUrl;
+    } catch (error: any) {
+        console.error('Error uploading invoice PDF:', error);
         throw error;
     }
 };
