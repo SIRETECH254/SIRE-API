@@ -47,7 +47,7 @@ interface IProject {
   projectNumber: string;        // Auto-generated (PRJ-2025-0001)
   title: string;
   description: string;
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   quotation?: ObjectId;          // Reference to Quotation (auto-set when quotation created)
   invoice?: ObjectId;            // Reference to Invoice (auto-set when invoice created)
   services: ObjectId[];          // References to Services
@@ -100,7 +100,7 @@ interface IProject {
 // Required fields
 title: { required: true, maxlength: 200 }
 description: { required: true }
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 status: { required: true, enum: ['pending', 'in_progress', 'on_hold', 'completed', 'cancelled'] }
 priority: { required: true, enum: ['low', 'medium', 'high', 'urgent'] }
 progress: { required: true, min: 0, max: 100 }
@@ -299,6 +299,7 @@ import Project from '../models/Project';
 import Client from '../models/Client';
 import User from '../models/User';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -316,8 +317,13 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 - Validate client and services
 - Create project record
 - **Note:** `quotation` and `invoice` are NOT in request body - they are set automatically when quotation/invoice is created
+- **Send in-app notifications to client and assigned team members** (project created)
 - Emit Socket.io event for real-time update
 **Response:** Complete project data
+
+**Notifications:**
+- **Client** receives in-app notification: "New Project Created" with project title and details
+- **Assigned Team Members** receive in-app notification: "New Project Created" with project title and assignment details
 
 **Important:** 
 - Projects must be created first before quotations
@@ -345,7 +351,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         }
 
         // Check if client exists
-        const clientExists = await Client.findById(client);
+        const clientExists = await User.findById(client);
         if (!clientExists) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -372,14 +378,46 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         await project.populate('client', 'firstName lastName email company');
         await project.populate('assignedTo', 'firstName lastName email');
 
-        // Emit Socket.io event for real-time update
-        const io = req.app.get('io');
-        if (io) {
-            io.emit('project_created', {
-                projectId: project._id,
-                title: project.title,
-                client: project.client
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'New Project Created',
+                message: `A new project "${project.title}" has been created.`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    priority: project.priority
+                },
+                io: req.app.get('io')
             });
+
+            // For Assigned Team Members (if any)
+            if (project.assignedTo && project.assignedTo.length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'New Project Created',
+                        message: `A new project "${project.title}" has been created and assigned to you.`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            priority: project.priority
+                        },
+                        io: req.app.get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(201).json({
@@ -610,7 +648,15 @@ export const deleteProject = async (req: Request, res: Response, next: NextFunct
 **Validation:**
 - User existence check
 - Role validation
+**Process:**
+- Update assigned team members
+- **Send bidirectional in-app notifications to newly assigned team members** (project assignment)
 **Response:** Updated project with team
+
+**Notifications:**
+- **Newly Assigned Team Members** receive bidirectional notification: "Assigned to Project" with actions:
+  - **"View Project"** button (Navigate action) - Opens project details
+- **Metadata:** Includes project ID, title, and priority
 
 **Controller Implementation:**
 ```typescript
@@ -635,10 +681,46 @@ export const assignTeamMembers = async (req: Request, res: Response, next: NextF
             return next(errorHandler(404, "One or more users not found"));
         }
 
-        project.assignedTo = userIds;
+        project.assignedTo = userIds.map(id => new mongoose.Types.ObjectId(id));
         await project.save();
 
         await project.populate('assignedTo', 'firstName lastName email avatar');
+
+        // Send notifications to newly assigned team members
+        try {
+            for (const userId of userIds) {
+                await createInAppNotification({
+                    recipient: userId,
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'Assigned to Project',
+                    message: `You have been assigned to project "${project.title}". Priority: ${project.priority}`,
+                    actions: [
+                        {
+                            id: 'view_project',
+                            label: 'View Project',
+                            type: 'navigate',
+                            route: `/projects/${project._id}`,
+                            variant: 'primary'
+                        }
+                    ],
+                    context: {
+                        resourceId: project._id.toString(),
+                        resourceType: 'project'
+                    },
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        priority: project.priority
+                    },
+                    io: req.app.get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -664,8 +746,13 @@ export const assignTeamMembers = async (req: Request, res: Response, next: NextF
 **Process:**
 - Update status
 - Set completion date if completed
+- **Send in-app notifications to client and assigned team members** (status updated)
 - Emit Socket.io event
 **Response:** Updated project
+
+**Notifications:**
+- **Client** receives bidirectional notification: "Project Status Updated" with actions (View Project)
+- **Assigned Team Members** receive in-app notification: "Project Status Updated" with status change details
 
 **Controller Implementation:**
 ```typescript
@@ -696,6 +783,59 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
             });
         }
 
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'Project Status Updated',
+                message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                actions: [
+                    {
+                        id: 'view_project',
+                        label: 'View Project',
+                        type: 'navigate',
+                        route: `/projects/${project._id}`,
+                        variant: 'primary'
+                    }
+                ],
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    oldStatus: 'previous',
+                    newStatus: project.status
+                },
+                io: req.app.get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && project.assignedTo.length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Project Status Updated',
+                        message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            oldStatus: 'previous',
+                            newStatus: project.status
+                        },
+                        io: req.app.get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Project status updated successfully",
@@ -717,7 +857,14 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
 **Validation:**
 - Progress between 0-100
 - Auto-update status based on progress
+**Process:**
+- Update progress percentage
+- **Send in-app notification to client** (only for milestone percentages: 25%, 50%, 75%, 100%)
 **Response:** Updated project
+
+**Notifications:**
+- **Client** receives in-app notification: "Project Progress Updated" (only for milestone progress: 25%, 50%, 75%, 100%)
+- **Metadata:** Includes project ID, title, progress percentage, and status
 
 **Controller Implementation:**
 ```typescript
@@ -747,6 +894,33 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
 
         await project.save();
 
+        // Send notification to client for milestone progress updates (25, 50, 75, 100)
+        try {
+            const isMilestoneProgress = [25, 50, 75, 100].includes(progress);
+            
+            // For Client (only for milestones)
+            if (isMilestoneProgress) {
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'Project Progress Updated',
+                    message: `Project "${project.title}" progress has been updated to ${progress}%`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        progress: progress,
+                        status: project.status
+                    },
+                    io: req.app.get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Project progress updated successfully",
@@ -768,7 +942,14 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
 **Validation:**
 - Title and due date required
 - Valid status
+**Process:**
+- Add milestone to project
+- **Send in-app notifications to client and assigned team members** (milestone added)
 **Response:** Updated project with new milestone
+
+**Notifications:**
+- **Client** receives in-app notification: "New Milestone Added" with milestone title and due date
+- **Assigned Team Members** receive in-app notification: "New Milestone Added" with milestone details
 
 **Controller Implementation:**
 ```typescript
@@ -800,6 +981,52 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
 
         await project.save();
 
+        // Send notifications for new milestone
+        try {
+            const newMilestone = project.milestones[project.milestones.length - 1];
+            
+            if (newMilestone) {
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'New Milestone Added',
+                    message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        milestoneTitle: newMilestone.title,
+                        dueDate: newMilestone.dueDate
+                    },
+                    io: req.app.get('io')
+                });
+
+                // For Assigned Team Members
+                if (project.assignedTo && project.assignedTo.length > 0) {
+                    for (const userId of project.assignedTo) {
+                        await createInAppNotification({
+                            recipient: userId.toString(),
+                            recipientModel: 'User',
+                            category: 'project',
+                            subject: 'New Milestone Added',
+                            message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                            metadata: {
+                                projectId: project._id,
+                                projectNumber: project.projectNumber,
+                                milestoneTitle: newMilestone.title,
+                                dueDate: newMilestone.dueDate
+                            },
+                            io: req.app.get('io')
+                        });
+                    }
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(201).json({
             success: true,
             message: "Milestone added successfully",
@@ -821,7 +1048,14 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
 **Validation:**
 - Milestone existence
 - Status validation
+**Process:**
+- Update milestone details or status
+- **Send in-app notifications to client and assigned team members** (milestone updated)
 **Response:** Updated milestone
+
+**Notifications:**
+- **Client** receives in-app notification: "Milestone Updated" with milestone title and status
+- **Assigned Team Members** receive in-app notification: "Milestone Updated" with milestone status change
 
 **Controller Implementation:**
 ```typescript
@@ -858,6 +1092,48 @@ export const updateMilestone = async (req: Request, res: Response, next: NextFun
         }
 
         await project.save();
+
+        // Send notifications for milestone status changes
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'Milestone Updated',
+                message: `Milestone "${milestone.title}" in project "${project.title}" has been marked as ${milestone.status}`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    milestoneTitle: milestone.title,
+                    status: milestone.status
+                },
+                io: req.app.get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && project.assignedTo.length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Milestone Updated',
+                        message: `Milestone "${milestone.title}" in project "${project.title}" has been marked as ${milestone.status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            milestoneTitle: milestone.title,
+                            status: milestone.status
+                        },
+                        io: req.app.get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -906,14 +1182,19 @@ export const deleteMilestone = async (req: Request, res: Response, next: NextFun
 };
 ```
 
-#### `uploadAttachment(projectId, file)`
-**Purpose:** Upload project attachment
+#### `uploadAttachment(projectId, files)`
+**Purpose:** Upload project attachments (supports multiple files, up to 10 per request)
 **Access:** Admin or assigned team member
 **Process:**
-- Upload to Cloudinary
-- Store file metadata
-- Track uploader
-**Response:** Attachment details
+- Upload multiple files to Cloudinary (max 10 files per request)
+- Store file metadata for each uploaded file
+- Track uploader for each attachment
+- **Send in-app notification to client** (new attachments uploaded)
+- Handle partial failures gracefully (continue uploading remaining files if one fails)
+**Response:** Array of uploaded attachment details with upload statistics
+
+**Notifications:**
+- **Client** receives in-app notification: "New Project Attachment" (single file) or "New Project Attachments" (multiple files) with file names and project details
 
 **Controller Implementation:**
 ```typescript
@@ -921,8 +1202,11 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
     try {
         const { projectId } = req.params;
 
-        if (!req.file) {
-            return next(errorHandler(400, "No file uploaded"));
+        // Check if files were uploaded (req.files is array when using .array())
+        const files = req.files as Express.Multer.File[];
+        
+        if (!files || files.length === 0) {
+            return next(errorHandler(400, "No files uploaded"));
         }
 
         const project = await Project.findById(projectId);
@@ -931,29 +1215,84 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(404, "Project not found"));
         }
 
-        // Upload to Cloudinary
-        const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/project-attachments');
+        const uploadedAttachments: any[] = [];
+        const uploadErrors: string[] = [];
 
-        project.attachments.push({
-            name: req.file.originalname,
+        // Upload each file to Cloudinary
+        for (const file of files) {
+            try {
+                const uploadResult = await uploadToCloudinary(file, 'sire-tech/project-attachments');
+
+                const attachment = {
+                    name: file.originalname,
             url: uploadResult.url,
             uploadedBy: req.user?._id as any,
             uploadedAt: new Date()
-        } as any);
+                };
 
+                project.attachments.push(attachment as any);
+                uploadedAttachments.push(attachment);
+            } catch (uploadError: any) {
+                console.error(`Error uploading file ${file.originalname}:`, uploadError);
+                uploadErrors.push(file.originalname);
+            }
+        }
+
+        // Save project with all new attachments
         await project.save();
+
+        // Send notifications for new attachments
+        try {
+            if (uploadedAttachments.length > 0 && req.user?._id) {
+                const fileCount = uploadedAttachments.length;
+                const fileNames = uploadedAttachments.map(a => a.name).join(', ');
+            
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
+                    message: fileCount === 1 
+                        ? `A new file "${fileNames}" has been uploaded to project "${project.title}"`
+                        : `${fileCount} new files have been uploaded to project "${project.title}": ${fileNames}`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        fileCount: fileCount,
+                        fileNames: uploadedAttachments.map(a => a.name),
+                        uploadedBy: req.user._id
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
+        // Prepare response message
+        let message = "Attachment uploaded successfully";
+        if (uploadedAttachments.length > 1) {
+            message = `${uploadedAttachments.length} attachments uploaded successfully`;
+        }
+        if (uploadErrors.length > 0) {
+            message += `. ${uploadErrors.length} file(s) failed to upload: ${uploadErrors.join(', ')}`;
+        }
 
         res.status(201).json({
             success: true,
-            message: "Attachment uploaded successfully",
+            message: message,
             data: {
-                attachment: project.attachments[project.attachments.length - 1]
+                attachments: uploadedAttachments,
+                uploadedCount: uploadedAttachments.length,
+                failedCount: uploadErrors.length
             }
         });
 
     } catch (error: any) {
         console.error('Upload attachment error:', error);
-        next(errorHandler(500, "Server error while uploading attachment"));
+        next(errorHandler(500, "Server error while uploading attachments"));
     }
 };
 ```
@@ -1134,7 +1473,7 @@ PUT    /:projectId/milestones/:milestoneId  // Update milestone
 DELETE /:projectId/milestones/:milestoneId  // Delete milestone
 
 // Attachment Routes
-POST   /:projectId/attachments    // Upload attachment
+POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
 DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 
 // Query Routes
@@ -1707,25 +2046,86 @@ export default router;
 **URL Parameter:** `projectId` - The project ID
 
 **Body:** `multipart/form-data`
-- `file`: File to upload
+- `files`: Array of files to upload (maximum 10 files per request)
+- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
+- Maximum file size: 10MB per file
+
+**Note:** You can upload multiple files in a single request. The field name must be `files` (plural).
 
 **Response:**
 ```json
 {
   "success": true,
+  "message": "3 attachments uploaded successfully",
+  "data": {
+    "attachments": [
+      {
+        "name": "document.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "image.jpg",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      },
+      {
+        "name": "screenshot.png",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "uploadedCount": 3,
+    "failedCount": 0
+  }
+}
+```
+
+**Single File Upload Response:**
+```json
+{
+  "success": true,
   "message": "Attachment uploaded successfully",
   "data": {
-    "attachment": {
-      "_id": "...",
+    "attachments": [
+      {
       "name": "document.pdf",
       "url": "https://cloudinary.com/...",
-      "uploadedBy": {
-        "_id": "...",
-        "firstName": "Jane",
-        "lastName": "Smith"
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "uploadedCount": 1,
+    "failedCount": 0
+  }
+}
+```
+
+**Partial Failure Response:**
+```json
+{
+  "success": true,
+  "message": "2 attachments uploaded successfully. 1 file(s) failed to upload: large-file.pdf",
+  "data": {
+    "attachments": [
+      {
+        "name": "document1.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
+        "uploadedAt": "2025-01-01T00:00:00.000Z"
       },
+      {
+        "name": "document2.pdf",
+        "url": "https://cloudinary.com/...",
+        "uploadedBy": "...",
       "uploadedAt": "2025-01-01T00:00:00.000Z"
     }
+    ],
+    "uploadedCount": 2,
+    "failedCount": 1
   }
 }
 ```
@@ -1794,12 +2194,23 @@ curl -X POST http://localhost:5000/api/projects/<projectId>/milestones \
   }'
 ```
 
-### Upload Attachment
+### Upload Attachment (Single File)
 ```bash
 curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
   -H "Authorization: Bearer <token>" \
-  -F "file=@/path/to/document.pdf"
+  -F "files=@/path/to/document.pdf"
 ```
+
+### Upload Multiple Attachments
+```bash
+curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
+  -H "Authorization: Bearer <token>" \
+  -F "files=@/path/to/document1.pdf" \
+  -F "files=@/path/to/image1.jpg" \
+  -F "files=@/path/to/screenshot.png"
+```
+
+**Note:** The field name must be `files` (plural) to upload multiple files. Maximum 10 files per request.
 
 ---
 
@@ -1878,10 +2289,75 @@ curl -X POST http://localhost:5000/api/projects/<projectId>/attachments \
 - Track team workload
 - User notifications
 
+### Notification Integration
+
+The Project system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Project Created** (`createProject`)
+   - **Recipients:** Client and Assigned Team Members
+   - **Category:** `project`
+   - **Subject:** "New Project Created"
+   - **Message:** Includes project title and details
+   - **Metadata:** `projectId`, `projectNumber`, `title`, `priority`
+
+2. **Team Members Assigned** (`assignTeamMembers`)
+   - **Recipient:** Newly Assigned Team Members
+   - **Category:** `project`
+   - **Subject:** "Assigned to Project"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"View Project"** button (Navigate action) - Opens project details
+   - **Metadata:** `projectId`, `projectNumber`, `title`, `priority`
+
+3. **Project Status Updated** (`updateProjectStatus`)
+   - **Recipients:** Client and Assigned Team Members
+   - **Category:** `project`
+   - **Subject:** "Project Status Updated"
+   - **Type:** **Bidirectional Notification** (for client) with actions
+   - **Actions (Client):**
+     - **"View Project"** button (Navigate action) - Opens project details
+   - **Metadata:** `projectId`, `projectNumber`, `title`, `oldStatus`, `newStatus`
+
+4. **Project Progress Updated** (`updateProgress`)
+   - **Recipient:** Client (only for milestone percentages: 25%, 50%, 75%, 100%)
+   - **Category:** `project`
+   - **Subject:** "Project Progress Updated"
+   - **Message:** Includes progress percentage (only for milestones: 25%, 50%, 75%, 100%)
+   - **Metadata:** `projectId`, `projectNumber`, `title`, `progress`, `status`
+
+5. **Milestone Added** (`addMilestone`)
+   - **Recipients:** Client and Assigned Team Members
+   - **Category:** `project`
+   - **Subject:** "New Milestone Added"
+   - **Message:** Includes milestone title and due date
+   - **Metadata:** `projectId`, `projectNumber`, `milestoneTitle`, `dueDate`
+
+6. **Milestone Updated** (`updateMilestone`)
+   - **Recipients:** Client and Assigned Team Members
+   - **Category:** `project`
+   - **Subject:** "Milestone Updated"
+   - **Message:** Includes milestone title and status change
+   - **Metadata:** `projectId`, `projectNumber`, `milestoneTitle`, `status`
+
+7. **Project Attachment Uploaded** (`uploadAttachment`)
+   - **Recipient:** Client
+   - **Category:** `project`
+   - **Subject:** "New Project Attachment"
+   - **Message:** Includes file name and project details
+   - **Metadata:** `projectId`, `projectNumber`, `fileName`, `uploadedBy`
+
+#### Notification Preferences
+
+All notifications respect user/client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
+
 ### Real-time Updates
-- Socket.io notifications
-- Status change alerts
-- Progress updates
+- Socket.io events (`project_created`, `status_updated`)
+- Live status change alerts
+- Progress updates (milestone percentages)
 - New milestone notifications
 
 ---

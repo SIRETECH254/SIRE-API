@@ -10,7 +10,7 @@ const invoiceSchema = new Schema<IInvoice>({
   },
   client: {
     type: Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   quotation: {
@@ -111,25 +111,24 @@ invoiceSchema.index({ dueDate: 1 });
 invoiceSchema.index({ client: 1, status: 1 });
 invoiceSchema.index({ createdAt: -1 });
 
-invoiceSchema.pre('save', async function(next) {
-  // Only generate invoice number if it doesn't exist
-  if (!(this as any).invoiceNumber) {
-    try {
+// Pre-validate hook runs before validation, ensuring invoiceNumber is set
+invoiceSchema.pre('validate', async function(next) {
+  try {
+    // Only generate invoice number for new documents that don't have one
+    if ((this as any).isNew && !(this as any).invoiceNumber) {
       const year = new Date().getFullYear();
-      // Count invoices for the current year to ensure proper sequencing
-      const yearPrefix = `INV-${year}-`;
-      const existingInvoices = await mongoose.model('Invoice').countDocuments({
-        invoiceNumber: new RegExp(`^${yearPrefix}`)
+      // Count documents created in the current year
+      const startOfYear = new Date(year, 0, 1);
+      const count = await mongoose.model('Invoice').countDocuments({
+        createdAt: { $gte: startOfYear }
       });
-      (this as any).invoiceNumber = `${yearPrefix}${String(existingInvoices + 1).padStart(4, '0')}`;
-    } catch (error) {
-      // Fallback to timestamp-based number if counting fails
-      const year = new Date().getFullYear();
-      const timestamp = Date.now().toString().slice(-6);
-      (this as any).invoiceNumber = `INV-${year}-${timestamp}`;
+      (this as any).invoiceNumber = `INV-${year}-${String(count + 1).padStart(4, '0')}`;
     }
+    next();
+  } catch (error: any) {
+    console.error('Error generating invoice number:', error);
+    next(error);
   }
-  next();
 });
 
 invoiceSchema.pre('save', function(next) {

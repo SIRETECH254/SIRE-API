@@ -13,16 +13,24 @@
 
 ## 🔑 Authentication Overview
 
-The SIRE Tech API uses JWT (JSON Web Tokens) for authentication with role-based access control (RBAC). The system supports both admin users and regular clients with different permission levels, incorporating OTP verification and comprehensive security features.
+The SIRE Tech API uses JWT (JSON Web Tokens) for authentication with a unified role-based access control (RBAC) system. All users (including former clients) are managed through a single User model with role assignments. The system incorporates OTP verification and comprehensive security features.
 
 ### Authentication Flow
-1. **Registration/Login** → Generate JWT tokens with role-based payload
+1. **Registration/Login** → Generate JWT tokens with role-based payload (roleIds array)
 2. **OTP Verification** → Email/SMS verification for new accounts
 3. **Token Validation** → Middleware verifies tokens and user status
-4. **Role Authorization** → Check user permissions and account status
-5. **Protected Routes** → Access granted based on role and verification status
+4. **Role Authorization** → Check user roles and permissions
+5. **Protected Routes** → Access granted based on roles and verification status
+
+### Unified User System
+- **Single User Model** - All users (clients, admins, staff) use the same User model
+- **Role-Based Access** - Users have roles array referencing Role documents
+- **Default Role** - New users automatically receive "client" role on registration
+- **Multiple Roles** - Users can have multiple roles assigned
+- **Presaved Roles** - Roles are stored in database and fetched dynamically
 
 ### User Roles
+- `client` - Default role for clients/customers (assigned automatically on registration)
 - `super_admin` - Full system access, can manage all users and system settings
 - `finance` - Financial operations access, invoice/payment management
 - `project_manager` - Project management access, team assignment, milestone tracking
@@ -55,19 +63,20 @@ import { generateTokens, generateOTP } from '../utils/authHelpers';
 ### Functions Overview
 
 #### `register(userData)`
-**Purpose:** Register new admin user with OTP verification
-**Access:** Super admin only (for admin creation)
+**Purpose:** Register new user with OTP verification
+**Access:** Public (for client registration) or Super admin (for admin creation)
 **Validation:**
 - Email uniqueness check
 - Password strength validation
 - Phone number format validation
-- Role assignment validation
+- Role assignment validation (optional, defaults to "client")
 **Process:**
 - Generate and hash password
+- Assign default "client" role (or specified role if provided)
 - Create OTP code with expiry
 - Send OTP via email and SMS
 - Set user as unverified initially
-**Response:** User data without password, verification status
+**Response:** User data without password, verification status, with roles array
 
 **Controller Implementation:**
 ```typescript
@@ -114,6 +123,25 @@ export const register = async (req: Request, res: Response, next: NextFunction):
         const otp: string = generateOTP()
         const otpExpiry: Date = new Date(Date.now() + (parseInt(process.env.OTP_EXP_MINUTES || '10')) * 60 * 1000)
 
+        // Get default "client" role (or specified role if provided)
+        let assignedRoles: any[] = [];
+        if (role) {
+            // If role is specified, find it by name
+            const specifiedRole = await Role.findOne({ name: role.toLowerCase() });
+            if (specifiedRole) {
+                assignedRoles = [specifiedRole._id];
+            } else {
+                return next(errorHandler(400, `Role "${role}" not found`));
+            }
+        } else {
+            // Default to "client" role
+            const clientRole = await Role.findOne({ name: 'client' });
+            if (!clientRole) {
+                return next(errorHandler(500, "Default client role not found. Please run migration script first."));
+            }
+            assignedRoles = [clientRole._id];
+        }
+
         // Create user
         const user: IUser = new User({
             firstName,
@@ -121,7 +149,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
             email: email.toLowerCase(),
             phone,
             password: hashedPassword,
-            role: role || 'staff',
+            roles: assignedRoles,
             otpCode: otp,
             otpExpiry,
             emailVerified: false
@@ -133,6 +161,9 @@ export const register = async (req: Request, res: Response, next: NextFunction):
         const notificationResult: any = await sendOTPNotification(email, phone, otp, `${firstName} ${lastName}`)
         console.log('OTP notification result:', notificationResult)
 
+        // Populate roles for response
+        await user.populate('roles', 'name displayName');
+
         res.status(201).json({
             success: true,
             message: "User registered successfully. Please verify your email with the OTP sent.",
@@ -142,7 +173,7 @@ export const register = async (req: Request, res: Response, next: NextFunction):
                 lastName: user.lastName,
                 email: user.email,
                 phone: user.phone,
-                role: user.role,
+                roles: user.roles,
                 emailVerified: user.emailVerified
             }
         })
@@ -388,7 +419,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
                     email: user.email,
                     phone: user.phone,
                     avatar: user.avatar,
-                    role: user.role,
+                    roles: user.roles,
                     emailVerified: user.emailVerified
                 },
                 accessToken,
@@ -1147,7 +1178,10 @@ curl -X POST http://localhost:5000/api/auth/refresh-token \
 - **Secret Key:** Environment variable
 - **Access Token:** Short-lived (15 minutes default)
 - **Refresh Token:** Long-lived (7 days) for renewal
-- **Token Payload:** User ID, role, and admin status
+- **Token Payload:** 
+  - `userId` - User ID
+  - `roleIds` - Array of role IDs assigned to user
+  - `userType` - Always "user" for unified system
 - **Token Verification:** Signature and expiry validation
 
 ### OTP Verification

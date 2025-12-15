@@ -9,44 +9,31 @@ import swaggerConfig from './config/swagger.js';
 // Import Routes
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
-import clientRoutes from './routes/clientRoutes';
+import roleRoutes from './routes/roleRoutes';
 import projectRoutes from './routes/projectRoutes';
 import serviceRoutes from './routes/serviceRoutes';
 import quotationRoutes from './routes/quotationRoutes';
 import invoiceRoutes from './routes/invoiceRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import testimonialRoutes from './routes/testimonialRoutes';
+import contactRoutes from './routes/contactRoutes';
+import dashboardRoutes from './routes/dashboardRoutes';
 
 
 const app = express();
 
 const PORT = process.env.PORT || 4000;
 
-// CORS Configuration with fallback defaults
-const getAllowedOrigins = () => {
-  // Default fallback origins for SIRE API
-  const defaultOrigins = [
-    'http://localhost:4000',
-    'http://localhost:5173',
-    'http://localhost:5174'
-  ];
-  
-  if (!process.env.CORS_ORIGIN) {
-    console.warn('⚠️  CORS_ORIGIN not set in environment variables, using default origins:', defaultOrigins);
-    return defaultOrigins;
-  }
-  
-  const origins = process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean);
-  
-  if (origins.length === 0) {
-    console.warn('⚠️  CORS_ORIGIN is empty, using default origins:', defaultOrigins);
-    return defaultOrigins;
-  }
-  
-  return origins;
-};
-
-const allowedOrigins = getAllowedOrigins();
+// CORS Configuration with explicit origins
+const allowedOrigins = [
+  'http://localhost:8081',
+  'http://localhost:8082',
+  'http://localhost:4000',
+  'https://sire-api.onrender.com',
+  'https://sire-admin.onrender.com',
+  'https://sire-client.onrender.com'
+];
 
 // CORS middleware configuration
 app.use(cors({
@@ -87,7 +74,7 @@ app.use("/api/auth", authRoutes);
 
 app.use("/api/users", userRoutes);
 
-app.use("/api/clients", clientRoutes);
+app.use("/api/roles", roleRoutes);
 
 app.use("/api/projects", projectRoutes);
 
@@ -100,6 +87,12 @@ app.use("/api/invoices", invoiceRoutes);
 app.use("/api/payments", paymentRoutes);
 
 app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/testimonials", testimonialRoutes);
+
+app.use("/api/contact", contactRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: express.Request, res: express.Response) => {
@@ -186,7 +179,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Make io and socketConnections available to controllers
+// Make io and socketConnect ions available to controllers
 app.set('io', io);
 
 app.set('socketConnections', socketConnections);
@@ -198,7 +191,7 @@ app.get('/api', (req: express.Request, res: express.Response) => {
     version: '1.0.0',
     documentation: '/api/docs',
     features: [
-      'User & Client Management',
+      'Unified User Management',
       'Service Catalog',
       'Quotation & Invoice Generation',
       'Payment Processing (M-Pesa, Stripe, PayPal)',
@@ -211,16 +204,15 @@ app.get('/api', (req: express.Request, res: express.Response) => {
     endpoints: {
       auth: '/api/auth',
       users: '/api/users',
-      clients: '/api/clients',
       projects: '/api/projects',
       services: '/api/services',
-      quotations: '/api/quotations (coming soon)',
-      invoices: '/api/invoices (coming soon)',
-      payments: '/api/payments (coming soon)',
-      testimonials: '/api/testimonials (coming soon)',
-      notifications: '/api/notifications (coming soon)',
-      contact: '/api/contact (coming soon)',
-      dashboard: '/api/dashboard (coming soon)'
+      quotations: '/api/quotations',
+      invoices: '/api/invoices',
+      payments: '/api/payments',
+      testimonials: '/api/testimonials',
+      notifications: '/api/notifications',
+      contact: '/api/contact',
+      dashboard: '/api/dashboard'
     }
   });
 });
@@ -260,7 +252,7 @@ server.listen(PORT, (err?: Error) => {
     console.log(`🚀 SIRE Tech API Server running on http://localhost:${PORT}`);
     console.log(`📚 API Documentation: http://localhost:${PORT}/api/docs`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔒 CORS Origins: ${process.env.CORS_ORIGIN || 'Using defaults'}`);
+    console.log(`🔒 CORS Origins: ${allowedOrigins.join(', ')}`);
     console.log(`🔌 Socket.io enabled for real-time features`);
   } 
   else 

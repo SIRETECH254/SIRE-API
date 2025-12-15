@@ -2,10 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { errorHandler } from '../middleware/errorHandler';
 import Project from '../models/Project';
-import Client from '../models/Client';
 import User from '../models/User';
+import Role from '../models/Role';
 import Service from '../models/Service';
 import { uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 // @desc    Create new project
 // @route   POST /api/projects
@@ -35,7 +36,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         }
 
         // Check if client exists
-        const clientExists = await Client.findById(client);
+        const clientExists = await User.findById(client);
         if (!clientExists) {
             return next(errorHandler(404, "Client not found"));
         }
@@ -104,6 +105,48 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
                 title: project.title,
                 client: project.client
             });
+        }
+
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'New Project Created',
+                message: `A new project "${project.title}" has been created.`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    priority: project.priority
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members (if any)
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'New Project Created',
+                        message: `A new project "${project.title}" has been created and assigned to you.`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            priority: project.priority
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(201).json({
@@ -341,6 +384,42 @@ export const assignTeamMembers = async (req: Request, res: Response, next: NextF
 
         await project.populate('assignedTo', 'firstName lastName email avatar');
 
+        // Send notifications to newly assigned team members
+        try {
+            for (const userId of userIds) {
+                await createInAppNotification({
+                    recipient: userId,
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'Assigned to Project',
+                    message: `You have been assigned to project "${project.title}". Priority: ${project.priority}`,
+                    actions: [
+                        {
+                            id: 'view_project',
+                            label: 'View Project',
+                            type: 'navigate',
+                            route: `/projects/${project._id}`,
+                            variant: 'primary'
+                        }
+                    ],
+                    context: {
+                        resourceId: project._id.toString(),
+                        resourceType: 'project'
+                    },
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        priority: project.priority
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Team members assigned successfully",
@@ -383,6 +462,59 @@ export const updateProjectStatus = async (req: Request, res: Response, next: Nex
                 projectId: project._id,
                 status: project.status
             });
+        }
+
+        // Send notifications to client and assigned team members
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'Project Status Updated',
+                message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                actions: [
+                    {
+                        id: 'view_project',
+                        label: 'View Project',
+                        type: 'navigate',
+                        route: `/projects/${project._id}`,
+                        variant: 'primary'
+                    }
+                ],
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    title: project.title,
+                    oldStatus: 'previous',
+                    newStatus: project.status
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Project Status Updated',
+                        message: `Project "${project.title}" status has been updated to: ${project.status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            title: project.title,
+                            oldStatus: 'previous',
+                            newStatus: project.status
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
@@ -428,6 +560,33 @@ export const updateProgress = async (req: Request, res: Response, next: NextFunc
 
         await project.save();
 
+        // Send notification to client for milestone progress updates (25, 50, 75, 100)
+        try {
+            const isMilestoneProgress = [25, 50, 75, 100].includes(progress);
+            
+            // For Client (only for milestones)
+            if (isMilestoneProgress) {
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'Project Progress Updated',
+                    message: `Project "${project.title}" progress has been updated to ${progress}%`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        title: project.title,
+                        progress: progress,
+                        status: project.status
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Project progress updated successfully",
@@ -472,6 +631,52 @@ export const addMilestone = async (req: Request, res: Response, next: NextFuncti
         } as any);
 
         await project.save();
+
+        // Send notifications for new milestone
+        try {
+            const newMilestone = project.milestones[project.milestones.length - 1];
+            
+            if (newMilestone) {
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: 'New Milestone Added',
+                    message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    milestoneTitle: newMilestone.title,
+                    dueDate: newMilestone.dueDate
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'New Milestone Added',
+                        message: `A new milestone "${newMilestone.title}" has been added to project "${project.title}". Due date: ${new Date(newMilestone.dueDate).toLocaleDateString()}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            milestoneTitle: newMilestone.title,
+                            dueDate: newMilestone.dueDate
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -524,6 +729,48 @@ export const updateMilestone = async (req: Request, res: Response, next: NextFun
 
         await project.save();
 
+        // Send notifications for milestone status changes
+        try {
+            // For Client
+            await createInAppNotification({
+                recipient: project.client.toString(),
+                recipientModel: 'User',
+                category: 'project',
+                subject: 'Milestone Updated',
+                message: `Milestone "${(milestone as any).title}" in project "${project.title}" has been marked as ${(milestone as any).status}`,
+                metadata: {
+                    projectId: project._id,
+                    projectNumber: project.projectNumber,
+                    milestoneTitle: (milestone as any).title,
+                    status: (milestone as any).status
+                },
+                io: (req.app as any).get('io')
+            });
+
+            // For Assigned Team Members
+            if (project.assignedTo && (project.assignedTo as any).length > 0) {
+                for (const userId of project.assignedTo) {
+                    await createInAppNotification({
+                        recipient: userId.toString(),
+                        recipientModel: 'User',
+                        category: 'project',
+                        subject: 'Milestone Updated',
+                        message: `Milestone "${(milestone as any).title}" in project "${project.title}" has been marked as ${(milestone as any).status}`,
+                        metadata: {
+                            projectId: project._id,
+                            projectNumber: project.projectNumber,
+                            milestoneTitle: (milestone as any).title,
+                            status: (milestone as any).status
+                        },
+                        io: (req.app as any).get('io')
+                    });
+                }
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Milestone updated successfully",
@@ -572,8 +819,11 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
     try {
         const { projectId } = req.params;
 
-        if (!req.file) {
-            return next(errorHandler(400, "No file uploaded"));
+        // Check if files were uploaded (req.files is array when using .array())
+        const files = req.files as Express.Multer.File[];
+        
+        if (!files || files.length === 0) {
+            return next(errorHandler(400, "No files uploaded"));
         }
 
         const project = await Project.findById(projectId);
@@ -582,29 +832,84 @@ export const uploadAttachment = async (req: Request, res: Response, next: NextFu
             return next(errorHandler(404, "Project not found"));
         }
 
-        // Upload to Cloudinary
-        const uploadResult = await uploadToCloudinary(req.file, 'sire-tech/project-attachments');
+        const uploadedAttachments: any[] = [];
+        const uploadErrors: string[] = [];
 
-        project.attachments.push({
-            name: req.file.originalname,
-            url: uploadResult.url,
-            uploadedBy: req.user?._id as any,
-            uploadedAt: new Date()
-        } as any);
+        // Upload each file to Cloudinary
+        for (const file of files) {
+            try {
+                const uploadResult = await uploadToCloudinary(file, 'sire-tech/project-attachments');
 
+                const attachment = {
+                    name: file.originalname,
+                    url: uploadResult.url,
+                    uploadedBy: req.user?._id as any,
+                    uploadedAt: new Date()
+                };
+
+                project.attachments.push(attachment as any);
+                uploadedAttachments.push(attachment);
+            } catch (uploadError: any) {
+                console.error(`Error uploading file ${file.originalname}:`, uploadError);
+                uploadErrors.push(file.originalname);
+            }
+        }
+
+        // Save project with all new attachments
         await project.save();
+
+        // Send notifications for new attachments
+        try {
+            if (uploadedAttachments.length > 0 && req.user?._id) {
+                const fileCount = uploadedAttachments.length;
+                const fileNames = uploadedAttachments.map(a => a.name).join(', ');
+                
+                // For Client
+                await createInAppNotification({
+                    recipient: project.client.toString(),
+                    recipientModel: 'User',
+                    category: 'project',
+                    subject: fileCount === 1 ? 'New Project Attachment' : 'New Project Attachments',
+                    message: fileCount === 1 
+                        ? `A new file "${fileNames}" has been uploaded to project "${project.title}"`
+                        : `${fileCount} new files have been uploaded to project "${project.title}": ${fileNames}`,
+                    metadata: {
+                        projectId: project._id,
+                        projectNumber: project.projectNumber,
+                        fileCount: fileCount,
+                        fileNames: uploadedAttachments.map(a => a.name),
+                        uploadedBy: req.user._id
+                    },
+                    io: (req.app as any).get('io')
+                });
+            }
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
+        // Prepare response message
+        let message = "Attachment uploaded successfully";
+        if (uploadedAttachments.length > 1) {
+            message = `${uploadedAttachments.length} attachments uploaded successfully`;
+        }
+        if (uploadErrors.length > 0) {
+            message += `. ${uploadErrors.length} file(s) failed to upload: ${uploadErrors.join(', ')}`;
+        }
 
         res.status(201).json({
             success: true,
-            message: "Attachment uploaded successfully",
+            message: message,
             data: {
-                attachment: project.attachments[project.attachments.length - 1]
+                attachments: uploadedAttachments,
+                uploadedCount: uploadedAttachments.length,
+                failedCount: uploadErrors.length
             }
         });
 
     } catch (error: any) {
         console.error('Upload attachment error:', error);
-        next(errorHandler(500, "Server error while uploading attachment"));
+        next(errorHandler(500, "Server error while uploading attachments"));
     }
 };
 

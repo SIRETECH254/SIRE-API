@@ -8,15 +8,16 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "nodemon --exec tsx src/index.ts",
-    "dev:mcp": "nodemon --exec tsx src/index.ts"
+    "dev:mcp": "nodemon --exec tsx src/index.ts",
+    "migrate:roles": "tsx src/scripts/migrateToRoles.ts"
   },
   "devDependencies": {
-    "@types/pdfkit": "^0.17.3",
-    "@types/stream-buffers": "^3.0.8",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@types/pdfkit": "^0.17.3",
+    "@types/stream-buffers": "^3.0.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",

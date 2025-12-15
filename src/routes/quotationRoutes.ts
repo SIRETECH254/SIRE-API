@@ -2,6 +2,7 @@ import express from 'express';
 import {
     createQuotation,
     getAllQuotations,
+    getQuotationsByClient,
     getQuotation,
     updateQuotation,
     deleteQuotation,
@@ -34,6 +35,36 @@ const router = express.Router();
  *     responses:
  *       '201':
  *         description: Created
+ *
+ * /api/quotations/client/{clientId}:
+ *   get:
+ *     tags: [Quotations]
+ *     summary: Get quotations by client
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: List of quotations for the client
  *
  * /api/quotations/{quotationId}:
  *   get:
@@ -129,6 +160,9 @@ const router = express.Router();
  */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createQuotation);
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllQuotations);
+
+// Client-specific route must come before dynamic :quotationId route
+router.get('/client/:clientId', authenticateToken, getQuotationsByClient);
 
 // Specific sub-routes must come before dynamic :quotationId route
 router.post('/:quotationId/accept', authenticateToken, acceptQuotation);

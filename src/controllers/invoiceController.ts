@@ -4,9 +4,11 @@ import Invoice from '../models/Invoice';
 import Quotation from '../models/Quotation';
 import Project from '../models/Project';
 import Payment from '../models/Payment';
+import User from '../models/User';
 import { generateInvoicePDF } from '../utils/generatePDF';
 import { v2 as cloudinary } from 'cloudinary';
 import { sendInvoiceEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 
 export const createInvoice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -18,6 +20,11 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
         // Validation - only quotation is required
         if (!quotation) {
             return next(errorHandler(400, "Quotation is required"));
+        }
+
+        // Check if user is authenticated
+        if (!req.user || !req.user._id) {
+            return next(errorHandler(401, "Authentication required"));
         }
 
         // Check if quotation exists
@@ -33,55 +40,47 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "This quotation has already been converted to an invoice"));
         }
 
-        // Get project title from populated project or fetch it separately
-        let projectTitle = '';
-        if (quotationExists.project) {
-            // Check if project is populated or just an ObjectId
-            if (typeof quotationExists.project === 'object' && quotationExists.project !== null && 'title' in quotationExists.project) {
-                projectTitle = (quotationExists.project as any).title || '';
-            } else {
-                // If not populated, fetch the project
-                const project = await Project.findById(quotationExists.project);
-                projectTitle = project?.title || '';
-            }
-        }
-
-        // Convert dueDate string to Date object if provided
-        let parsedDueDate: Date;
-        if (dueDate) {
-            parsedDueDate = typeof dueDate === 'string' ? new Date(dueDate) : dueDate;
-            // Validate the date
-            if (isNaN(parsedDueDate.getTime())) {
-                return next(errorHandler(400, "Invalid due date format. Please use ISO date format (YYYY-MM-DD)"));
-            }
-        } else {
-            // Default to 30 days from now
-            parsedDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        }
-
-        // Ensure items exist and have required fields
+        // Validate quotation has items
         if (!quotationExists.items || quotationExists.items.length === 0) {
             return next(errorHandler(400, "Quotation must have at least one item"));
         }
+
+        // Get project title from populated project
+        const projectTitle = (quotationExists.project as any)?.title || 'Untitled Project';
+
+        // Map items from quotation
+        const items = quotationExists.items.map((item: any) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            total: item.quantity * item.unitPrice
+        }));
+
+        // Calculate subtotal from items
+        const subtotal = items.reduce((sum: number, item: any) => sum + item.total, 0);
+        
+        // Get tax and discount from quotation (with defaults)
+        const tax = quotationExists.tax || 0;
+        const discount = quotationExists.discount || 0;
+        
+        // Calculate total amount
+        const totalAmount = subtotal + tax - discount;
 
         // Create invoice from quotation data
         const invoice = new Invoice({
             client: quotationExists.client,
             quotation: quotationExists._id,
-            projectTitle: projectTitle || quotationExists.project?.toString() || 'Untitled Project',
-            items: quotationExists.items.map((item: any) => ({
-                description: item.description,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                total: item.total
-            })),
-            subtotal: quotationExists.subtotal || 0,
-            tax: quotationExists.tax || 0,
-            discount: quotationExists.discount || 0,
-            totalAmount: quotationExists.totalAmount || 0,
-            dueDate: parsedDueDate,
+            projectTitle: projectTitle,
+            items: items,
+            subtotal: subtotal,
+            tax: tax,
+            discount: discount,
+            totalAmount: totalAmount,
+            paidAmount: 0,
+            status: 'draft',
+            dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
             notes: quotationExists.notes,
-            createdBy: (req as any).user?._id
+            createdBy: req.user._id
         });
 
         await invoice.save();
@@ -110,6 +109,27 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
         await invoice.populate('quotation', 'quotationNumber');
         await invoice.populate('createdBy', 'firstName lastName email');
 
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'New Invoice Created',
+                message: `A new invoice ${invoice.invoiceNumber} has been created. Amount: $${invoice.totalAmount.toFixed(2)}`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    totalAmount: invoice.totalAmount,
+                    dueDate: invoice.dueDate
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(201).json({ 
             success: true, 
             message: "Invoice created successfully", 
@@ -118,15 +138,14 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
 
     } catch (error: any) {
         console.error('Create invoice error:', error);
-        // Log the actual error details for debugging
-        console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            name: error.name
-        });
-        // Return more specific error message if available
-        const errorMessage = error.message || "Server error while creating invoice";
-        next(errorHandler(500, errorMessage));
+        // Provide more specific error messages
+        if (error.name === 'ValidationError') {
+            return next(errorHandler(400, `Validation error: ${error.message}`));
+        }
+        if (error.name === 'CastError') {
+            return next(errorHandler(400, `Invalid quotation ID format`));
+        }
+        next(errorHandler(500, error.message || "Server error while creating invoice"));
     }
 };
 
@@ -175,6 +194,122 @@ export const getAllInvoices = async (req: Request, res: Response, next: NextFunc
     } catch (error: any) {
         console.error('Get all invoices error:', error);
         next(errorHandler(500, "Server error while fetching invoices"));
+    }
+};
+
+export const getInvoiceStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const total = await Invoice.countDocuments();
+
+        const byStatus = {
+            draft: await Invoice.countDocuments({ status: 'draft' }),
+            sent: await Invoice.countDocuments({ status: 'sent' }),
+            paid: await Invoice.countDocuments({ status: 'paid' }),
+            partiallyPaid: await Invoice.countDocuments({ status: 'partially_paid' }),
+            overdue: await Invoice.countDocuments({ status: 'overdue' }),
+            cancelled: await Invoice.countDocuments({ status: 'cancelled' })
+        };
+
+        // Calculate total amount, paid amount, and outstanding amount
+        const allInvoices = await Invoice.find({});
+        const totalAmount = allInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+        const paidAmount = allInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
+        const outstandingAmount = allInvoices
+            .filter(inv => ['sent', 'partially_paid', 'overdue'].includes(inv.status))
+            .reduce((sum, inv) => sum + (inv.totalAmount - inv.paidAmount), 0);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                stats: {
+                    total,
+                    byStatus,
+                    totalAmount,
+                    paidAmount,
+                    outstandingAmount
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get invoice stats error:', error);
+        next(errorHandler(500, "Server error while fetching invoice statistics"));
+    }
+};
+
+export const getOverdueInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const invoices = await Invoice.find({
+            dueDate: { $lt: today },
+            status: { $nin: ['paid', 'cancelled'] }
+        })
+            .populate('client', 'firstName lastName email company')
+            .populate('quotation', 'quotationNumber')
+            .populate('createdBy', 'firstName lastName email')
+            .sort({ dueDate: 'asc' });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                invoices
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get overdue invoices error:', error);
+        next(errorHandler(500, "Server error while fetching overdue invoices"));
+    }
+};
+
+export const getClientInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { clientId } = req.params as any;
+        const { page = 1, limit = 10, status } = req.query as any;
+
+        // Validate client exists
+        const client = await User.findById(clientId);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
+
+        const query: any = { client: clientId };
+
+        if (status) {
+            query.status = status;
+        }
+
+        const options = { page: parseInt(page), limit: parseInt(limit) };
+
+        const invoices = await Invoice.find(query)
+            .populate('client', 'firstName lastName email company')
+            .populate('quotation', 'quotationNumber')
+            .populate('createdBy', 'firstName lastName email')
+            .sort({ createdAt: 'desc' })
+            .limit(options.limit * 1)
+            .skip((options.page - 1) * options.limit);
+
+        const total = await Invoice.countDocuments(query);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                invoices,
+                pagination: {
+                    currentPage: options.page,
+                    totalPages: Math.ceil(total / options.limit),
+                    totalInvoices: total,
+                    hasNextPage: options.page < Math.ceil(total / options.limit),
+                    hasPrevPage: options.page > 1
+                }
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get client invoices error:', error);
+        next(errorHandler(500, "Server error while fetching client invoices"));
     }
 };
 
@@ -288,6 +423,27 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
             await payment.save();
         }
 
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'payment',
+                subject: 'Invoice Paid',
+                message: `Invoice ${invoice.invoiceNumber} has been marked as paid. Thank you for your payment!`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    paidAmount: invoice.paidAmount,
+                    paymentDate: invoice.paidDate
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({ success: true, message: "Invoice marked as paid successfully", data: { invoice } });
 
     } catch (error: any) {
@@ -308,6 +464,55 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
         invoice.status = 'overdue';
         await invoice.save();
 
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Overdue',
+                message: `Invoice ${invoice.invoiceNumber} is now overdue. Please make payment as soon as possible.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            method: 'mpesa',
+                            amount: invoice.totalAmount - invoice.paidAmount
+                        },
+                        variant: 'primary',
+                        requiresConfirmation: true,
+                        confirmationMessage: `Pay $${invoice.totalAmount - invoice.paidAmount} for invoice ${invoice.invoiceNumber}?`
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    totalAmount: invoice.totalAmount
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({ success: true, message: "Invoice marked as overdue", data: { invoice } });
 
     } catch (error: any) {
@@ -326,6 +531,9 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(404, "Invoice not found"));
         }
 
+        // Save old status before any checks
+        const oldStatus = invoice.status as any;
+
         if (invoice.status === 'paid') {
             return next(errorHandler(400, "Cannot cancel a paid invoice"));
         }
@@ -333,6 +541,28 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
         invoice.status = 'cancelled';
         if (reason) invoice.notes = `Cancellation reason: ${reason}`;
         await invoice.save();
+
+        // Send notification to client if invoice was sent or paid
+        if (oldStatus === 'sent' || oldStatus === 'paid') {
+            try {
+                await createInAppNotification({
+                    recipient: invoice.client.toString(),
+                    recipientModel: 'User',
+                    category: 'invoice',
+                    subject: 'Invoice Cancelled',
+                    message: `Invoice ${invoice.invoiceNumber} has been cancelled. Reason: ${reason || 'No reason provided'}`,
+                    metadata: {
+                        invoiceId: invoice._id,
+                        invoiceNumber: invoice.invoiceNumber,
+                        reason: reason
+                    },
+                    io: (req.app as any).get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
 
         res.status(200).json({ success: true, message: "Invoice cancelled successfully", data: { invoice } });
 
@@ -496,6 +726,52 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
         if (invoice.status === 'draft') {
             invoice.status = 'sent';
             await invoice.save();
+        }
+
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client._id.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Sent',
+                message: `Invoice ${invoice.invoiceNumber} has been sent to your email. Please make payment by ${new Date(invoice.dueDate).toLocaleDateString()}.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            amount: invoice.totalAmount
+                        },
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    pdfUrl: pdfUrl
+                },
+                io: (req.app as any).get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({

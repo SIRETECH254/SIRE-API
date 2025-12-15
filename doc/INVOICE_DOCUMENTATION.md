@@ -48,7 +48,7 @@ The SIRE Tech API Invoice Management System handles all invoice-related operatio
 interface IInvoice {
   _id: string;
   invoiceNumber: string;         // Auto-generated (INV-2025-0001)
-  client: ObjectId;              // Reference to Client
+  client: ObjectId;              // Reference to User
   quotation?: ObjectId;          // Reference to Quotation (if converted)
   projectTitle: string;
   items: Array<{
@@ -89,7 +89,7 @@ interface IInvoice {
 ```typescript
 // Required fields
 invoiceNumber: { required: true, unique: true }
-client: { required: true, ref: 'Client' }
+client: { required: true, ref: 'User' }
 projectTitle: { required: true, maxlength: 200 }
 items: { required: true, minlength: 1 }
 subtotal: { required: true, min: 0 }
@@ -302,8 +302,9 @@ import Invoice from '../models/Invoice';
 import Client from '../models/Client';
 import Quotation from '../models/Quotation';
 import Payment from '../models/Payment';
-import { generateInvoicePDF } from '../utils/pdfGenerator';
+import { generateInvoicePDF } from '../utils/generatePDF';
 import { sendInvoiceEmail } from '../services/external/emailService';
+import { createInAppNotification } from '../utils/notificationHelper';
 ```
 
 ### Functions Overview
@@ -323,8 +324,12 @@ import { sendInvoiceEmail } from '../services/external/emailService';
 - Update quotation status to 'converted'
 - Link invoice to quotation
 - Update project with invoice reference
+- **Send in-app notification to client** (invoice created)
 - Save invoice
 **Response:** Complete invoice data with populated references
+
+**Notifications:**
+- **Client** receives in-app notification: "New Invoice Created" with invoice number, amount, and due date
 
 **Important:** 
 - Only `quotation` ID is required in request body
@@ -400,6 +405,27 @@ export const createInvoice = async (req: Request, res: Response, next: NextFunct
         await invoice.populate('client', 'firstName lastName email company');
         await invoice.populate('quotation', 'quotationNumber');
         await invoice.populate('createdBy', 'firstName lastName email');
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'New Invoice Created',
+                message: `A new invoice ${invoice.invoiceNumber} has been created. Amount: $${invoice.totalAmount.toFixed(2)}`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    totalAmount: invoice.totalAmount,
+                    dueDate: invoice.dueDate
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(201).json({
             success: true,
@@ -639,8 +665,11 @@ export const deleteInvoice = async (req: Request, res: Response, next: NextFunct
 - Set status to 'paid'
 - Set paidDate
 - Create payment record
-- Emit notification
+- **Send in-app notification to client** (invoice paid)
 **Response:** Updated invoice
+
+**Notifications:**
+- **Client** receives in-app notification: "Invoice Paid" with invoice number and payment details
 
 **Controller Implementation:**
 ```typescript
@@ -673,13 +702,34 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
             const payment = new Payment({
                 invoice: invoice._id,
                 client: invoice.client,
-                amount: invoice.totalAmount - (invoice.paidAmount - invoice.totalAmount),
+                amount: invoice.totalAmount,
                 paymentMethod,
                 status: 'completed',
                 transactionId,
                 paymentDate: new Date()
             });
             await payment.save();
+        }
+
+        // Send notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'payment',
+                subject: 'Invoice Paid',
+                message: `Invoice ${invoice.invoiceNumber} has been marked as paid. Thank you for your payment!`,
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    paidAmount: invoice.paidAmount,
+                    paymentDate: invoice.paidDate
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
         }
 
         res.status(200).json({
@@ -703,8 +753,14 @@ export const markAsPaid = async (req: Request, res: Response, next: NextFunction
 **Process:**
 - Find invoices past due date
 - Update status to 'overdue'
+- **Send bidirectional in-app notification to client** (invoice overdue with actions)
 - Send reminder emails
 **Response:** List of marked invoices
+
+**Notifications:**
+- **Client** receives bidirectional in-app notification: "Invoice Overdue" with actions:
+  - **"Pay Now"** button (API action) - Directly initiates payment with confirmation
+  - **"View Invoice"** button (Navigate action) - Opens invoice details page
 
 **Controller Implementation:**
 ```typescript
@@ -720,6 +776,55 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
 
         invoice.status = 'overdue';
         await invoice.save();
+
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Overdue',
+                message: `Invoice ${invoice.invoiceNumber} is now overdue. Please make payment as soon as possible.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            method: 'mpesa',
+                            amount: invoice.totalAmount - invoice.paidAmount
+                        },
+                        variant: 'primary',
+                        requiresConfirmation: true,
+                        confirmationMessage: `Pay $${invoice.totalAmount - invoice.paidAmount} for invoice ${invoice.invoiceNumber}?`
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    totalAmount: invoice.totalAmount
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
 
         res.status(200).json({
             success: true,
@@ -744,8 +849,11 @@ export const markAsOverdue = async (req: Request, res: Response, next: NextFunct
 **Process:**
 - Update status to 'cancelled'
 - Log cancellation reason
-- Emit notification
+- **Send in-app notification to client** (if invoice was sent or paid)
 **Response:** Updated invoice
+
+**Notifications:**
+- **Client** receives in-app notification: "Invoice Cancelled" (only if invoice was previously sent or paid) with cancellation reason
 
 **Controller Implementation:**
 ```typescript
@@ -764,11 +872,36 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
             return next(errorHandler(400, "Cannot cancel a paid invoice"));
         }
 
+        // Save old status before any checks
+        const oldStatus = invoice.status;
+
         invoice.status = 'cancelled';
         if (reason) {
             invoice.notes = `Cancellation reason: ${reason}`;
         }
         await invoice.save();
+
+        // Send notification to client if invoice was sent or paid
+        if (oldStatus === 'sent' || oldStatus === 'paid') {
+            try {
+                await createInAppNotification({
+                    recipient: invoice.client.toString(),
+                    recipientModel: 'User',
+                    category: 'invoice',
+                    subject: 'Invoice Cancelled',
+                    message: `Invoice ${invoice.invoiceNumber} has been cancelled. Reason: ${reason || 'No reason provided'}`,
+                    metadata: {
+                        invoiceId: invoice._id,
+                        invoiceNumber: invoice.invoiceNumber,
+                        reason: reason
+                    },
+                    io: req.app.get('io')
+                });
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
+        }
 
         res.status(200).json({
             success: true,
@@ -785,7 +918,7 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
 };
 ```
 
-#### `generateInvoicePDF(invoiceId)`
+#### `generateInvoicePDFController(invoiceId)`
 **Purpose:** Generate PDF of invoice and upload to Cloudinary
 **Access:** Admin or client (own invoices)
 **Process:**
@@ -886,8 +1019,14 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
 - Upload PDF to Cloudinary
 - Send email with PDF attachment and URL
 - Update status to 'sent' if currently 'draft'
+- **Send bidirectional in-app notification to client** (invoice sent with actions)
 - Track send details
 **Response:** Confirmation message with PDF URL
+
+**Notifications:**
+- **Client** receives bidirectional in-app notification: "Invoice Sent" with actions:
+  - **"Pay Now"** button (API action) - Directly initiates payment
+  - **"View Invoice"** button (Navigate action) - Opens invoice details page
 
 **Controller Implementation:**
 ```typescript
@@ -976,6 +1115,52 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
             await invoice.save();
         }
 
+        // Send bidirectional notification to client
+        try {
+            await createInAppNotification({
+                recipient: invoice.client._id.toString(),
+                recipientModel: 'User',
+                category: 'invoice',
+                subject: 'Invoice Sent',
+                message: `Invoice ${invoice.invoiceNumber} has been sent to your email. Please make payment by ${new Date(invoice.dueDate).toLocaleDateString()}.`,
+                actions: [
+                    {
+                        id: 'make_payment',
+                        label: 'Pay Now',
+                        type: 'api',
+                        endpoint: '/api/payments/initiate',
+                        method: 'POST',
+                        payload: {
+                            invoiceId: invoice._id.toString(),
+                            amount: invoice.totalAmount
+                        },
+                        variant: 'primary'
+                    },
+                    {
+                        id: 'view_invoice',
+                        label: 'View Invoice',
+                        type: 'navigate',
+                        route: `/invoices/${invoice._id}`,
+                        variant: 'secondary'
+                    }
+                ],
+                context: {
+                    resourceId: invoice._id.toString(),
+                    resourceType: 'invoice'
+                },
+                metadata: {
+                    invoiceId: invoice._id,
+                    invoiceNumber: invoice.invoiceNumber,
+                    dueDate: invoice.dueDate,
+                    pdfUrl: pdfUrl
+                },
+                io: req.app.get('io')
+            });
+        } catch (notificationError) {
+            console.error('Error sending notification:', notificationError);
+            // Don't fail the request if notification fails
+        }
+
         res.status(200).json({
             success: true,
             message: "Invoice sent successfully",
@@ -993,133 +1178,6 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
 };
 ```
 
-#### `getClientInvoices(clientId)`
-**Purpose:** Get all invoices for a client
-**Access:** Admin or client themselves
-**Response:** List of client's invoices
-
-**Controller Implementation:**
-```typescript
-export const getClientInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { clientId } = req.params;
-
-        const invoices = await Invoice.find({ client: clientId })
-            .populate('quotation', 'quotationNumber')
-            .populate('createdBy', 'firstName lastName email')
-            .sort({ createdAt: 'desc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                invoices: invoices
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get client invoices error:', error);
-        next(errorHandler(500, "Server error while fetching client invoices"));
-    }
-};
-```
-
-#### `getOverdueInvoices()`
-**Purpose:** Get all overdue invoices
-**Access:** Admin users
-**Response:** List of overdue invoices
-
-**Controller Implementation:**
-```typescript
-export const getOverdueInvoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const overdueInvoices = await Invoice.find({
-            status: 'overdue'
-        })
-            .populate('client', 'firstName lastName email company')
-            .sort({ dueDate: 'asc' });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                invoices: overdueInvoices,
-                count: overdueInvoices.length
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get overdue invoices error:', error);
-        next(errorHandler(500, "Server error while fetching overdue invoices"));
-    }
-};
-```
-
-#### `getInvoiceStats()`
-**Purpose:** Get invoice statistics
-**Access:** Admin users
-**Response:**
-- Total invoices by status
-- Total revenue (paid + partially paid)
-- Outstanding balance
-- Overdue count and amount
-- Average invoice value
-- Payment collection rate
-
-**Controller Implementation:**
-```typescript
-export const getInvoiceStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const total = await Invoice.countDocuments();
-        const draft = await Invoice.countDocuments({ status: 'draft' });
-        const sent = await Invoice.countDocuments({ status: 'sent' });
-        const paid = await Invoice.countDocuments({ status: 'paid' });
-        const partiallyPaid = await Invoice.countDocuments({ status: 'partially_paid' });
-        const overdue = await Invoice.countDocuments({ status: 'overdue' });
-        const cancelled = await Invoice.countDocuments({ status: 'cancelled' });
-
-        // Calculate revenue
-        const paidInvoices = await Invoice.find({ status: 'paid' });
-        const partialInvoices = await Invoice.find({ status: 'partially_paid' });
-        
-        const totalRevenue = paidInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-        const partialRevenue = partialInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-        const totalCollected = totalRevenue + partialRevenue;
-
-        // Outstanding balance
-        const allInvoices = await Invoice.find({
-            status: { $in: ['sent', 'partially_paid', 'overdue'] }
-        });
-        const outstanding = allInvoices.reduce((sum, inv) => sum + (inv.totalAmount - inv.paidAmount), 0);
-
-        res.status(200).json({
-            success: true,
-            data: {
-                stats: {
-                    total,
-                    byStatus: {
-                        draft,
-                        sent,
-                        paid,
-                        partiallyPaid,
-                        overdue,
-                        cancelled
-                    },
-                    revenue: {
-                        totalCollected,
-                        outstanding,
-                        paidInFull: totalRevenue,
-                        partialPayments: partialRevenue
-                    },
-                    paymentCollectionRate: total > 0 ? ((paid / total) * 100).toFixed(2) : 0
-                }
-            }
-        });
-
-    } catch (error: any) {
-        console.error('Get invoice stats error:', error);
-        next(errorHandler(500, "Server error while fetching invoice statistics"));
-    }
-};
-```
 
 ---
 
@@ -1129,27 +1187,18 @@ export const getInvoiceStats = async (req: Request, res: Response, next: NextFun
 
 ```typescript
 // Admin Routes
-POST   /                          // Create invoice
-GET    /                          // Get all invoices (paginated, filtered)
-GET    /stats                     // Get invoice statistics
+POST   /                          // Create invoice (admin)
+GET    /                          // Get all invoices (admin)
 
 // Invoice Management Routes
 GET    /:invoiceId                // Get single invoice
-PUT    /:invoiceId                // Update invoice
+PUT    /:invoiceId                // Update invoice (admin)
 DELETE /:invoiceId                // Delete invoice (super admin)
-
-// Payment Action Routes
-PATCH  /:invoiceId/mark-paid      // Mark as paid
-PATCH  /:invoiceId/mark-overdue   // Mark as overdue
-PATCH  /:invoiceId/cancel         // Cancel invoice
-
-// Document Routes
+PATCH  /:invoiceId/mark-paid      // Mark as paid (admin)
+PATCH  /:invoiceId/mark-overdue   // Mark as overdue (admin)
+PATCH  /:invoiceId/cancel         // Cancel invoice (admin)
 GET    /:invoiceId/pdf            // Generate PDF
-POST   /:invoiceId/send           // Send invoice via email
-
-// Query Routes
-GET    /client/:clientId          // Get client invoices
-GET    /overdue                   // Get overdue invoices
+POST   /:invoiceId/send           // Send invoice via email (admin)
 ```
 
 ### Router Implementation
@@ -1161,111 +1210,28 @@ import express from 'express';
 import {
     createInvoice,
     getAllInvoices,
-    getInvoiceStats,
     getInvoice,
     updateInvoice,
     deleteInvoice,
     markAsPaid,
     markAsOverdue,
     cancelInvoice,
-    generateInvoicePDF,
-    sendInvoice,
-    getClientInvoices,
-    getOverdueInvoices
+    generateInvoicePDFController,
+    sendInvoice
 } from '../controllers/invoiceController';
 import { authenticateToken, authorizeRoles } from '../middleware/auth';
 
 const router = express.Router();
 
-/**
- * @route   POST /api/invoices
- * @desc    Create new invoice
- * @access  Private (Admin, Finance)
- */
 router.post('/', authenticateToken, authorizeRoles(['super_admin', 'finance']), createInvoice);
-
-/**
- * @route   GET /api/invoices
- * @desc    Get all invoices with filtering and pagination
- * @access  Private (Admin)
- */
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllInvoices);
-
-/**
- * @route   GET /api/invoices/stats
- * @desc    Get invoice statistics
- * @access  Private (Admin)
- */
-router.get('/stats', authenticateToken, authorizeRoles(['super_admin', 'finance']), getInvoiceStats);
-
-/**
- * @route   GET /api/invoices/overdue
- * @desc    Get overdue invoices
- * @access  Private (Admin)
- */
-router.get('/overdue', authenticateToken, authorizeRoles(['super_admin', 'finance']), getOverdueInvoices);
-
-/**
- * @route   GET /api/invoices/client/:clientId
- * @desc    Get client invoices
- * @access  Private (Client or Admin)
- */
-router.get('/client/:clientId', authenticateToken, getClientInvoices);
-
-/**
- * @route   GET /api/invoices/:invoiceId
- * @desc    Get single invoice
- * @access  Private (Admin or Client)
- */
 router.get('/:invoiceId', authenticateToken, getInvoice);
-
-/**
- * @route   PUT /api/invoices/:invoiceId
- * @desc    Update invoice
- * @access  Private (Admin)
- */
 router.put('/:invoiceId', authenticateToken, authorizeRoles(['super_admin', 'finance']), updateInvoice);
-
-/**
- * @route   DELETE /api/invoices/:invoiceId
- * @desc    Delete invoice
- * @access  Private (Super Admin only)
- */
 router.delete('/:invoiceId', authenticateToken, authorizeRoles(['super_admin']), deleteInvoice);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/mark-paid
- * @desc    Mark invoice as paid
- * @access  Private (Admin, Finance)
- */
 router.patch('/:invoiceId/mark-paid', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsPaid);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/mark-overdue
- * @desc    Mark invoice as overdue
- * @access  Private (Admin, Finance)
- */
 router.patch('/:invoiceId/mark-overdue', authenticateToken, authorizeRoles(['super_admin', 'finance']), markAsOverdue);
-
-/**
- * @route   PATCH /api/invoices/:invoiceId/cancel
- * @desc    Cancel invoice
- * @access  Private (Admin)
- */
 router.patch('/:invoiceId/cancel', authenticateToken, authorizeRoles(['super_admin', 'finance']), cancelInvoice);
-
-/**
- * @route   GET /api/invoices/:invoiceId/pdf
- * @desc    Generate invoice PDF
- * @access  Private (Admin or Client)
- */
-router.get('/:invoiceId/pdf', authenticateToken, generateInvoicePDF);
-
-/**
- * @route   POST /api/invoices/:invoiceId/send
- * @desc    Send invoice via email
- * @access  Private (Admin)
- */
+router.get('/:invoiceId/pdf', authenticateToken, generateInvoicePDFController);
 router.post('/:invoiceId/send', authenticateToken, authorizeRoles(['super_admin', 'finance']), sendInvoice);
 
 export default router;
@@ -1762,10 +1728,57 @@ curl -X GET http://localhost:5000/api/invoices/stats \
 - Financial reporting
 
 ### Notification Integration
-- Email invoice delivery
-- Payment reminders
-- Overdue alerts
-- Payment confirmations
+
+The Invoice system sends **in-app notifications** via Socket.io for real-time updates:
+
+#### Notification Events
+
+1. **Invoice Created** (`createInvoice`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "New Invoice Created"
+   - **Message:** Includes invoice number, amount, and due date
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `totalAmount`, `dueDate`
+
+2. **Invoice Sent** (`sendInvoice`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Sent"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Pay Now"** button (API action) - Directly initiates payment
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `dueDate`, `pdfUrl`
+
+3. **Invoice Paid** (`markAsPaid`)
+   - **Recipient:** Client
+   - **Category:** `payment`
+   - **Subject:** "Invoice Paid"
+   - **Message:** Includes invoice number and payment details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `paidAmount`, `paymentDate`
+
+4. **Invoice Overdue** (`markAsOverdue`)
+   - **Recipient:** Client
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Overdue"
+   - **Type:** **Bidirectional Notification** with actions
+   - **Actions:**
+     - **"Pay Now"** button (API action) - Directly initiates payment with confirmation dialog
+     - **"View Invoice"** button (Navigate action) - Opens invoice details
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `dueDate`, `totalAmount`
+
+5. **Invoice Cancelled** (`cancelInvoice`)
+   - **Recipient:** Client (only if invoice was previously sent or paid)
+   - **Category:** `invoice`
+   - **Subject:** "Invoice Cancelled"
+   - **Message:** Includes cancellation reason
+   - **Metadata:** `invoiceId`, `invoiceNumber`, `reason`
+
+#### Notification Preferences
+
+All notifications respect user/client notification preferences:
+- If `inApp` preference is `false`, notifications are skipped
+- Default behavior: Notifications are sent unless explicitly disabled
 
 ---
 

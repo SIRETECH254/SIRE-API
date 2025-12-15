@@ -7,13 +7,18 @@ import {
     updateNotificationPreferences,
     getAllUsers,
     getUserById,
+    updateUser,
     updateUserStatus,
     setUserAdmin,
     getUserRoles,
     deleteUser,
-    adminCreateCustomer
+    adminCreateCustomer,
+    assignRole,
+    removeRole,
+    getClients
 } from '../controllers/userController';
 import { authenticateToken, authorizeRoles, requireAdmin } from '../middleware/auth';
+import { uploadUserAvatar } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -100,6 +105,20 @@ const router = express.Router();
  *     responses:
  *       '200':
  *         description: User
+ *   put:
+ *     tags: [Users]
+ *     summary: Update user (admin)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       '200':
+ *         description: Updated
  *   delete:
  *     tags: [Users]
  *     summary: Delete user
@@ -175,7 +194,7 @@ router.get('/profile', authenticateToken, getUserProfile);
  * @desc    Update own profile
  * @access  Private
  */
-router.put('/profile', authenticateToken, updateUserProfile);
+router.put('/profile', authenticateToken, uploadUserAvatar.single('avatar'), updateUserProfile);
 
 /**
  * @route   PUT /api/users/change-password
@@ -213,11 +232,25 @@ router.post('/admin-create', authenticateToken, authorizeRoles(['super_admin', '
 router.get('/', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getAllUsers);
 
 /**
+ * @route   GET /api/users/clients
+ * @desc    Get clients (users with client role)
+ * @access  Private (Admin)
+ */
+router.get('/clients', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getClients);
+
+/**
  * @route   GET /api/users/:userId
  * @desc    Get single user (admin)
  * @access  Private (Admin only)
  */
 router.get('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), getUserById);
+
+/**
+ * @route   PUT /api/users/:userId
+ * @desc    Update user (admin)
+ * @access  Private (Admin only)
+ */
+router.put('/:userId', authenticateToken, authorizeRoles(['super_admin', 'finance', 'project_manager']), uploadUserAvatar.single('avatar'), updateUser);
 
 /**
  * @route   PUT /api/users/:userId/status
@@ -246,5 +279,19 @@ router.get('/:userId/roles', authenticateToken, authorizeRoles(['super_admin', '
  * @access  Private (Super Admin only)
  */
 router.delete('/:userId', authenticateToken, requireAdmin, deleteUser);
+
+/**
+ * @route   POST /api/users/:userId/roles
+ * @desc    Assign role to user
+ * @access  Private (Super Admin only)
+ */
+router.post('/:userId/roles', authenticateToken, requireAdmin, assignRole);
+
+/**
+ * @route   DELETE /api/users/:userId/roles/:roleId
+ * @desc    Remove role from user
+ * @access  Private (Super Admin only)
+ */
+router.delete('/:userId/roles/:roleId', authenticateToken, requireAdmin, removeRole);
 
 export default router;

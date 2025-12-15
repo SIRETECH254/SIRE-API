@@ -15,7 +15,7 @@ const paymentSchema = new Schema({
   },
   client: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   amount: {
@@ -27,16 +27,16 @@ const paymentSchema = new Schema({
     type: String,
     required: [true, 'Payment method is required'],
     enum: {
-      values: ['mpesa', 'bank_transfer', 'stripe', 'paypal', 'cash'],
-      message: 'Payment method must be mpesa, bank_transfer, stripe, paypal, or cash'
+      values: ['mpesa', 'paystack'],
+      message: 'Payment method must be mpesa or paystack'
     }
   },
   status: {
     type: String,
     required: [true, 'Status is required'],
     enum: {
-      values: ['pending', 'completed', 'failed', 'refunded'],
-      message: 'Status must be pending, completed, failed, or refunded'
+      values: ['pending', 'completed', 'failed'],
+      message: 'Status must be pending, completed, or failed'
     },
     default: 'pending'
   },
@@ -88,13 +88,24 @@ paymentSchema.index({ client: 1, status: 1 });
 paymentSchema.index({ 'processorRefs.daraja.checkoutRequestId': 1 });
 paymentSchema.index({ 'processorRefs.paystack.reference': 1 });
 
-paymentSchema.pre('save', async function(next) {
-  if (!(this as any).paymentNumber) {
-    const year = new Date().getFullYear();
-    const count = await mongoose.model('Payment').countDocuments();
-    (this as any).paymentNumber = `PAY-${year}-${String(count + 1).padStart(4, '0')}`;
+// Pre-validate hook runs before validation, ensuring paymentNumber is set
+paymentSchema.pre('validate', async function(next) {
+  try {
+    // Only generate payment number for new documents that don't have one
+    if ((this as any).isNew && !(this as any).paymentNumber) {
+      const year = new Date().getFullYear();
+      // Count documents created in the current year
+      const startOfYear = new Date(year, 0, 1);
+      const count = await mongoose.model('Payment').countDocuments({
+        createdAt: { $gte: startOfYear }
+      });
+      (this as any).paymentNumber = `PAY-${year}-${String(count + 1).padStart(4, '0')}`;
+    }
+    next();
+  } catch (error: any) {
+    console.error('Error generating payment number:', error);
+    next(error);
   }
-  next();
 });
 
 const Payment = mongoose.model<IPayment>('Payment', paymentSchema);

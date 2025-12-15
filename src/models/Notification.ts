@@ -11,9 +11,10 @@ const notificationSchema = new Schema<INotification>({
     type: String,
     required: [true, 'Recipient model is required'],
     enum: {
-      values: ['User', 'Client'],
-      message: 'Recipient model must be User or Client'
-    }
+      values: ['User'],
+      message: 'Recipient model must be User'
+    },
+    default: 'User'
   },
   type: {
     type: String,
@@ -59,6 +60,38 @@ const notificationSchema = new Schema<INotification>({
   },
   metadata: {
     type: Schema.Types.Mixed
+  },
+  // Bidirectional Notification Support
+  actions: [{
+    id: { type: String, required: true },
+    label: { type: String, required: true },
+    type: { 
+      type: String, 
+      enum: ['api', 'navigate', 'modal', 'confirm'],
+      required: true 
+    },
+    endpoint: String,
+    method: { 
+      type: String, 
+      enum: ['GET', 'POST', 'PATCH', 'DELETE'] 
+    },
+    payload: Schema.Types.Mixed,
+    route: String,
+    modal: String,
+    variant: { 
+      type: String, 
+      enum: ['primary', 'secondary', 'danger', 'success'] 
+    },
+    requiresConfirmation: Boolean,
+    confirmationMessage: String
+  }],
+  context: {
+    resourceId: String,
+    resourceType: String,
+    additionalData: Schema.Types.Mixed
+  },
+  expiresAt: {
+    type: Date
   }
 }, {
   timestamps: true

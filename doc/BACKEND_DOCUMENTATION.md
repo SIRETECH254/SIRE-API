@@ -68,7 +68,7 @@
 
 ## 🗄️ Database Models
 
-### 1. User Model (Admin)
+### 1. User Model (Unified)
 ```typescript
 interface IUser {
   _id: ObjectId;
@@ -76,35 +76,7 @@ interface IUser {
   lastName: string;
   email: string;
   password: string;
-  role: 'super_admin' | 'finance' | 'project_manager' | 'staff';
-  phone?: string;
-  isActive: boolean;
-  avatar?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-**Fields:**
-- `firstName`, `lastName` - Admin name
-- `email` - Unique, required
-- `password` - Hashed password
-- `role` - Access level (super_admin, finance, project_manager, staff)
-- `phone` - Contact number
-- `isActive` - Account status
-- `avatar` - Profile image URL
-- Timestamps
-
----
-
-### 2. Client Model
-```typescript
-interface IClient {
-  _id: ObjectId;
-  firstName: string;
-  lastName: string;
-  email: string;
-  password: string;
+  roles: ObjectId[]; // Array of Role references
   phone: string;
   company?: string;
   address?: string;
@@ -112,21 +84,71 @@ interface IClient {
   country?: string;
   isActive: boolean;
   emailVerified: boolean;
+  avatar?: string | null;
+  avatarPublicId?: string | null;
+  otpCode?: string;
+  otpExpiry?: Date;
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  lastLoginAt?: Date;
+  notificationPreferences?: {
+    email?: boolean;
+    sms?: boolean;
+    inApp?: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
 **Fields:**
-- `firstName`, `lastName` - Client name
+- `firstName`, `lastName` - User name
 - `email` - Unique, required
 - `password` - Hashed password
-- `phone` - Contact number
-- `company` - Business name (optional)
-- `address`, `city`, `country` - Location details
+- `roles` - Array of Role ObjectIds (at least one required)
+- `phone` - Contact number (required)
+- `company` - Business name (optional, for clients)
+- `address`, `city`, `country` - Location details (optional, for clients)
 - `isActive` - Account status
 - `emailVerified` - Email verification status
+- `avatar` - Profile image URL (optional)
+- `avatarPublicId` - Cloudinary public ID for avatar (optional)
+- OTP and password reset fields
+- Activity tracking and notification preferences
 - Timestamps
+
+---
+
+### 2. Role Model
+```typescript
+interface IRole {
+  _id: ObjectId;
+  name: string; // Unique, lowercase (e.g., 'super_admin', 'client')
+  displayName: string; // Human-readable name
+  description?: string;
+  permissions: string[]; // Array of permission strings
+  isActive: boolean;
+  isSystemRole: boolean; // True for system roles that cannot be deleted
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**Fields:**
+- `name` - Unique role identifier (lowercase, required)
+- `displayName` - Human-readable role name (required)
+- `description` - Role description (optional)
+- `permissions` - Array of permission strings (e.g., ['user:read', 'project:create'])
+- `isActive` - Role status (default: true)
+- `isSystemRole` - System role flag (prevents deletion, default: false)
+- Timestamps
+
+**System Roles:**
+- `super_admin` - Full system access
+- `finance` - Financial operations access
+- `project_manager` - Project management access
+- `staff` - Basic staff access
+- `client` - External client/customer access (default for new registrations)
 
 ---
 
@@ -136,8 +158,6 @@ interface IService {
   _id: ObjectId;
   title: string;
   description: string;
-  category: 'web_development' | 'mobile_app' | 'digital_marketing' | 'ui_ux_design' | 'consulting' | 'other';
-  basePrice?: number;
   features: string[];
   isActive: boolean;
   icon?: string;
@@ -148,13 +168,11 @@ interface IService {
 ```
 
 **Fields:**
-- `title` - Service name
+- `title` - Service name (unique, required)
 - `description` - Detailed description
-- `category` - Service type
-- `basePrice` - Starting price (optional)
-- `features` - Array of service features
-- `isActive` - Visibility status
-- `icon` - Service icon/image
+- `features` - Array of service features (at least one required)
+- `isActive` - Visibility status (default: true)
+- `icon` - Service icon/image URL (optional)
 - `createdBy` - Admin who created it
 - Timestamps
 
@@ -165,11 +183,10 @@ interface IService {
 interface IQuotation {
   _id: ObjectId;
   quotationNumber: string; // Auto-generated (QT-2025-0001)
-  client: ObjectId; // Reference to Client
-  projectTitle: string;
-  projectDescription: string;
-  services: Array<{
-    service: ObjectId; // Reference to Service
+  project: ObjectId; // Reference to Project
+  client: ObjectId; // Reference to User
+  items: Array<{
+    description: string;
     quantity: number;
     unitPrice: number;
     total: number;
@@ -189,14 +206,17 @@ interface IQuotation {
 ```
 
 **Fields:**
-- `quotationNumber` - Unique identifier
-- `client` - Client reference
-- `projectTitle`, `projectDescription` - Project details
-- `services` - Array of requested services with pricing
-- `subtotal`, `tax`, `discount`, `totalAmount` - Pricing breakdown
+- `quotationNumber` - Unique identifier (auto-generated)
+- `project` - Reference to Project model
+- `client` - Reference to User (with client role)
+- `items` - Array of quotation items with description, quantity, unitPrice, and total
+- `subtotal` - Sum of all item totals (auto-calculated)
+- `tax` - Tax amount (default: 0)
+- `discount` - Discount amount (default: 0)
+- `totalAmount` - Final amount (auto-calculated: subtotal + tax - discount)
 - `status` - Quotation lifecycle status
 - `validUntil` - Expiration date
-- `notes` - Additional information
+- `notes` - Additional information (optional, max 500 characters)
 - `createdBy` - Admin who created it
 - `convertedToInvoice` - Invoice reference (if converted)
 - Timestamps
@@ -208,7 +228,7 @@ interface IQuotation {
 interface IInvoice {
   _id: ObjectId;
   invoiceNumber: string; // Auto-generated (INV-2025-0001)
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   quotation?: ObjectId; // Reference to Quotation (if converted)
   projectTitle: string;
   items: Array<{
@@ -234,7 +254,7 @@ interface IInvoice {
 
 **Fields:**
 - `invoiceNumber` - Unique identifier
-- `client` - Client reference
+- `client` - Reference to User (with client role)
 - `quotation` - Source quotation (optional)
 - `projectTitle` - Project name
 - `items` - Billing items
@@ -255,32 +275,44 @@ interface IPayment {
   _id: ObjectId;
   paymentNumber: string; // Auto-generated (PAY-2025-0001)
   invoice: ObjectId; // Reference to Invoice
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   amount: number;
-  paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentMethod: 'mpesa' | 'paystack';
+  status: 'pending' | 'completed' | 'failed';
   transactionId?: string;
   reference?: string;
   paymentDate: Date;
   notes?: string;
   metadata?: Record<string, any>;
+  processorRefs?: {
+    daraja?: {
+      merchantRequestId?: string;
+      checkoutRequestId?: string;
+    };
+    paystack?: {
+      reference?: string;
+    };
+  };
+  rawPayload?: any;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
 **Fields:**
-- `paymentNumber` - Unique identifier
+- `paymentNumber` - Unique identifier (auto-generated)
 - `invoice` - Invoice reference
 - `client` - Client reference
-- `amount` - Payment amount
-- `paymentMethod` - Payment channel
-- `status` - Payment status
-- `transactionId` - Gateway transaction ID
-- `reference` - Payment reference
-- `paymentDate` - When payment was made
-- `notes` - Additional information
-- `metadata` - Extra payment data
+- `amount` - Payment amount (min: 0)
+- `paymentMethod` - Payment channel (mpesa or paystack)
+- `status` - Payment status (pending, completed, or failed)
+- `transactionId` - Gateway transaction ID (optional)
+- `reference` - Payment reference (optional)
+- `paymentDate` - When payment was made (default: Date.now)
+- `notes` - Additional information (optional, max 500 characters)
+- `metadata` - Extra payment data (optional)
+- `processorRefs` - Processor-specific references (daraja or paystack)
+- `rawPayload` - Raw webhook payload (optional)
 - Timestamps
 
 ---
@@ -292,7 +324,7 @@ interface IProject {
   projectNumber: string; // Auto-generated (PRJ-2025-0001)
   title: string;
   description: string;
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   quotation?: ObjectId; // Reference to Quotation
   invoice?: ObjectId; // Reference to Invoice
   services: ObjectId[]; // References to Services
@@ -326,7 +358,7 @@ interface IProject {
 **Fields:**
 - `projectNumber` - Unique identifier
 - `title`, `description` - Project details
-- `client` - Client reference
+- `client` - Reference to User (with client role)
 - `quotation`, `invoice` - Related documents
 - `services` - Services included
 - `status` - Project lifecycle status
@@ -346,7 +378,7 @@ interface IProject {
 ```typescript
 interface ITestimonial {
   _id: ObjectId;
-  client: ObjectId; // Reference to Client
+  client: ObjectId; // Reference to User
   project?: ObjectId; // Reference to Project
   rating: number; // 1-5
   message: string;
@@ -360,7 +392,7 @@ interface ITestimonial {
 ```
 
 **Fields:**
-- `client` - Client who gave testimonial
+- `client` - User (with client role) who gave testimonial
 - `project` - Related project (optional)
 - `rating` - Star rating (1-5)
 - `message` - Testimonial text
@@ -376,8 +408,8 @@ interface ITestimonial {
 ```typescript
 interface INotification {
   _id: ObjectId;
-  recipient: ObjectId; // Reference to User or Client
-  recipientModel: 'User' | 'Client';
+  recipient: ObjectId; // Reference to User
+  recipientModel: 'User';
   type: 'email' | 'sms' | 'push' | 'in_app';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
   subject: string;
@@ -386,21 +418,28 @@ interface INotification {
   sentAt?: Date;
   readAt?: Date;
   metadata?: Record<string, any>;
+  actions?: NotificationAction[];
+  context?: NotificationContext;
+  expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
 **Fields:**
-- `recipient` - Who receives the notification
-- `recipientModel` - User type (Admin or Client)
-- `type` - Notification channel
-- `category` - Notification category
-- `subject`, `message` - Notification content
-- `status` - Delivery status
-- `sentAt` - When sent
-- `readAt` - When read
-- `metadata` - Additional data
+- `recipient` - Who receives the notification (reference to User)
+- `recipientModel` - Always 'User' (unified user system)
+- `type` - Notification channel (email, sms, push, in_app)
+- `category` - Notification category (invoice, payment, project, quotation, general)
+- `subject` - Notification subject (max 200 characters)
+- `message` - Notification content
+- `status` - Delivery status (pending, sent, failed, default: pending)
+- `sentAt` - When sent (optional)
+- `readAt` - When read (optional)
+- `metadata` - Additional data (optional)
+- `actions` - Action buttons for notifications (optional)
+- `context` - Resource context (resourceId, resourceType, additionalData)
+- `expiresAt` - Expiration date (optional)
 - Timestamps
 
 ---
@@ -439,29 +478,30 @@ interface IContactMessage {
 ### 1. Auth Controllers
 
 #### `authController.ts`
-- `registerClient()` - Client registration
-- `registerAdmin()` - Admin registration (super admin only)
-- `login()` - Login for both clients and admins
+- `register()` - Admin registration with OTP verification
+- `verifyOTP()` - Verify OTP and activate account
+- `resendOTP()` - Resend OTP for verification
+- `login()` - Admin login (email/phone + password)
 - `logout()` - Logout user
 - `forgotPassword()` - Send password reset email
 - `resetPassword()` - Reset password with token
-- `verifyEmail()` - Verify client email
 - `refreshToken()` - Refresh JWT token
 - `getMe()` - Get current user profile
 
+**Note:** All user registration (including clients) is handled through the unified `register()` function in `authController.ts`. New users are automatically assigned the 'client' role by default.
+
 ---
 
-### 2. Client Controllers
+### 2. Role Controllers
 
-#### `clientController.ts`
-- `getAllClients()` - Get all clients (admin)
-- `getClient()` - Get single client
-- `updateClient()` - Update client profile
-- `deleteClient()` - Delete client (admin)
-- `getClientStats()` - Get client statistics
-- `getClientProjects()` - Get client's projects
-- `getClientInvoices()` - Get client's invoices
-- `getClientPayments()` - Get client's payments
+#### `roleController.ts`
+- `createRole()` - Create new role (super admin only)
+- `getAllRoles()` - Get all roles
+- `getRole()` - Get single role by ID
+- `updateRole()` - Update role (super admin only)
+- `deleteRole()` - Delete role (super admin only, cannot delete system roles)
+- `getUsersByRole()` - Get all users with a specific role
+- `getClients()` - Get all users with 'client' role
 
 ---
 
@@ -475,6 +515,7 @@ interface IContactMessage {
 - `updateService()` - Update service (admin)
 - `deleteService()` - Delete service (admin)
 - `toggleServiceStatus()` - Activate/deactivate service
+- `uploadServiceIcon()` - Upload service icon (admin)
 
 ---
 
@@ -505,27 +546,26 @@ interface IContactMessage {
 - `deleteInvoice()` - Delete invoice (admin)
 - `markAsPaid()` - Mark invoice as paid
 - `markAsOverdue()` - Mark invoice as overdue
-- `generateInvoicePDF()` - Generate PDF
+- `cancelInvoice()` - Cancel invoice
+- `generateInvoicePDFController()` - Generate PDF
 - `sendInvoice()` - Email invoice to client
-- `getClientInvoices()` - Get client's invoices
-- `getInvoiceStats()` - Get invoice statistics
 
 ---
 
 ### 6. Payment Controllers
 
 #### `paymentController.ts`
-- `createPayment()` - Record payment
+- `createPaymentAdmin()` - Record payment (admin)
 - `getAllPayments()` - Get all payments (admin)
 - `getPayment()` - Get single payment
 - `updatePayment()` - Update payment (admin)
 - `deletePayment()` - Delete payment (admin)
-- `initiateMpesaPayment()` - M-Pesa integration
-- `mpesaCallback()` - M-Pesa webhook
-- `initiateStripePayment()` - Stripe integration
-- `stripeWebhook()` - Stripe webhook
 - `getClientPayments()` - Get client's payments
-- `getPaymentStats()` - Get payment statistics
+- `getInvoicePayments()` - Get payments for an invoice
+- `initiatePayment()` - Initiate payment (handles both M-Pesa and Paystack)
+- `mpesaWebhook()` - M-Pesa webhook handler
+- `paystackWebhook()` - Paystack webhook handler
+- `queryMpesaByCheckoutId()` - Query M-Pesa payment status by checkout request ID
 
 ---
 
@@ -534,6 +574,7 @@ interface IContactMessage {
 #### `projectController.ts`
 - `createProject()` - Create project (admin)
 - `getAllProjects()` - Get all projects
+- `getProjectStats()` - Get project statistics (admin)
 - `getProject()` - Get single project
 - `updateProject()` - Update project
 - `deleteProject()` - Delete project (admin)
@@ -542,9 +583,11 @@ interface IContactMessage {
 - `updateProgress()` - Update progress percentage
 - `addMilestone()` - Add project milestone
 - `updateMilestone()` - Update milestone
-- `uploadAttachment()` - Upload project file
+- `deleteMilestone()` - Delete milestone
+- `uploadAttachment()` - Upload project files (supports multiple files, max 10 per request)
 - `deleteAttachment()` - Delete project file
 - `getClientProjects()` - Get client's projects
+- `getAssignedProjects()` - Get projects assigned to current user
 
 ---
 
@@ -566,13 +609,19 @@ interface IContactMessage {
 ### 9. Notification Controllers
 
 #### `notificationController.ts`
-- `sendNotification()` - Send notification
+- `sendNotification()` - Send notification (admin)
 - `getUserNotifications()` - Get user's notifications
+- `getNotification()` - Get single notification
 - `markAsRead()` - Mark notification as read
 - `markAllAsRead()` - Mark all as read
 - `deleteNotification()` - Delete notification
-- `sendInvoiceReminder()` - Send invoice reminder
-- `sendPaymentConfirmation()` - Send payment confirmation
+- `getUnreadCount()` - Get unread notification count
+- `getUnreadNotifications()` - Get unread notifications
+- `getNotificationsByCategory()` - Get notifications by category
+- `sendInvoiceReminder()` - Send invoice reminder (admin)
+- `sendPaymentConfirmation()` - Send payment confirmation (admin)
+- `sendProjectUpdate()` - Send project update notification (admin)
+- `sendBulkNotification()` - Send bulk notification (super admin)
 
 ---
 
@@ -604,14 +653,19 @@ interface IContactMessage {
 ### 12. User Controllers (Admin Management)
 
 #### `userController.ts`
-- `createUser()` - Create admin user (super admin)
+- `getUserProfile()` - Get current user profile
+- `updateUserProfile()` - Update own profile
+- `changePassword()` - Change password
+- `getNotificationPreferences()` - Get notification preferences
+- `updateNotificationPreferences()` - Update notification preferences
 - `getAllUsers()` - Get all admin users
-- `getUser()` - Get single user
-- `updateUser()` - Update user
-- `deleteUser()` - Delete user
-- `toggleUserStatus()` - Activate/deactivate user
-- `updateRole()` - Update user role
-- `updateProfile()` - Update own profile
+- `getUserById()` - Get single user (admin)
+- `updateUser()` - Update any user (admin)
+- `updateUserStatus()` - Update user status (super admin)
+- `setUserAdmin()` - Set user admin role (super admin)
+- `getUserRoles()` - Get user roles (admin)
+- `deleteUser()` - Delete user (super admin)
+- `adminCreateCustomer()` - Admin creates a customer
 
 ---
 
@@ -621,31 +675,32 @@ interface IContactMessage {
 **Base:** `/api/auth`
 
 ```typescript
-POST   /register/client           // Client registration
-POST   /register/admin            // Admin registration (super admin only)
-POST   /login                     // Login
-POST   /logout                    // Logout
+POST   /register                  // Admin registration with OTP
+POST   /verify-otp                // Verify OTP and activate account
+POST   /resend-otp                // Resend OTP for verification
+POST   /login                     // Admin login (email/phone + password)
+POST   /logout                    // Logout user
 POST   /forgot-password           // Forgot password
 POST   /reset-password/:token     // Reset password
-POST   /verify-email/:token       // Verify email
 POST   /refresh-token             // Refresh token
-GET    /me                        // Get current user
+GET    /me                        // Get current user profile
 ```
+
+**Note:** All user registration (including clients) is handled through `/api/auth/register`. New users are automatically assigned the 'client' role by default.
 
 ---
 
-### Client Routes
-**Base:** `/api/clients`
+### Role Routes
+**Base:** `/api/roles`
 
 ```typescript
-GET    /                          // Get all clients (admin)
-GET    /:id                       // Get single client
-PUT    /:id                       // Update client
-DELETE /:id                       // Delete client (admin)
-GET    /:id/stats                 // Get client stats
-GET    /:id/projects              // Get client projects
-GET    /:id/invoices              // Get client invoices
-GET    /:id/payments              // Get client payments
+POST   /                          // Create role (super admin only)
+GET    /                          // Get all roles
+GET    /:id                       // Get single role
+PUT    /:id                       // Update role (super admin only)
+DELETE /:id                       // Delete role (super admin only)
+GET    /:id/users                 // Get users with specific role
+GET    /clients                   // Get all users with 'client' role
 ```
 
 ---
@@ -654,13 +709,14 @@ GET    /:id/payments              // Get client payments
 **Base:** `/api/services`
 
 ```typescript
+GET    /active                    // Get active services (public)
 POST   /                          // Create service (admin)
-GET    /                          // Get all services
-GET    /active                    // Get active services
-GET    /:id                       // Get single service
+GET    /                          // Get all services (admin)
+GET    /:id                       // Get single service (public)
 PUT    /:id                       // Update service (admin)
 DELETE /:id                       // Delete service (admin)
-PATCH  /:id/toggle-status         // Toggle service status
+PATCH  /:id/toggle-status         // Toggle service status (admin)
+POST   /:id/icon                  // Upload service icon (admin)
 ```
 
 ---
@@ -669,17 +725,16 @@ PATCH  /:id/toggle-status         // Toggle service status
 **Base:** `/api/quotations`
 
 ```typescript
-POST   /                          // Create quotation
+POST   /                          // Create quotation (admin)
 GET    /                          // Get all quotations (admin)
-GET    /client/:clientId          // Get client quotations
-GET    /:id                       // Get single quotation
-PUT    /:id                       // Update quotation
-DELETE /:id                       // Delete quotation
-POST   /:id/accept                // Accept quotation (client)
-POST   /:id/reject                // Reject quotation (client)
-POST   /:id/convert-to-invoice    // Convert to invoice
-GET    /:id/pdf                   // Generate PDF
-POST   /:id/send                  // Send quotation via email
+GET    /:quotationId              // Get single quotation
+PUT    /:quotationId              // Update quotation (admin)
+DELETE /:quotationId              // Delete quotation (admin)
+POST   /:quotationId/accept       // Accept quotation (client)
+POST   /:quotationId/reject       // Reject quotation (client)
+POST   /:quotationId/convert-to-invoice  // Convert to invoice (admin)
+GET    /:quotationId/pdf          // Generate PDF
+POST   /:quotationId/send         // Send quotation via email (admin)
 ```
 
 ---
@@ -688,17 +743,16 @@ POST   /:id/send                  // Send quotation via email
 **Base:** `/api/invoices`
 
 ```typescript
-POST   /                          // Create invoice
+POST   /                          // Create invoice (admin)
 GET    /                          // Get all invoices (admin)
-GET    /client/:clientId          // Get client invoices
-GET    /:id                       // Get single invoice
-PUT    /:id                       // Update invoice
-DELETE /:id                       // Delete invoice
-PATCH  /:id/mark-paid             // Mark as paid
-PATCH  /:id/mark-overdue          // Mark as overdue
-GET    /:id/pdf                   // Generate PDF
-POST   /:id/send                  // Send invoice via email
-GET    /stats                     // Invoice statistics
+GET    /:invoiceId                // Get single invoice
+PUT    /:invoiceId                // Update invoice (admin)
+DELETE /:invoiceId                // Delete invoice (admin)
+PATCH  /:invoiceId/mark-paid      // Mark as paid (admin)
+PATCH  /:invoiceId/mark-overdue   // Mark as overdue (admin)
+PATCH  /:invoiceId/cancel         // Cancel invoice (admin)
+GET    /:invoiceId/pdf             // Generate PDF
+POST   /:invoiceId/send           // Send invoice via email (admin)
 ```
 
 ---
@@ -707,17 +761,17 @@ GET    /stats                     // Invoice statistics
 **Base:** `/api/payments`
 
 ```typescript
-POST   /                          // Create payment
+POST   /                          // Create payment (admin)
 GET    /                          // Get all payments (admin)
 GET    /client/:clientId          // Get client payments
-GET    /:id                       // Get single payment
-PUT    /:id                       // Update payment
-DELETE /:id                       // Delete payment
-POST   /mpesa/initiate            // Initiate M-Pesa payment
-POST   /mpesa/callback            // M-Pesa callback
-POST   /stripe/initiate           // Initiate Stripe payment
-POST   /stripe/webhook            // Stripe webhook
-GET    /stats                     // Payment statistics
+GET    /invoice/:invoiceId        // Get invoice payments
+GET    /:paymentId                // Get single payment
+PUT    /:paymentId                // Update payment (admin)
+DELETE /:paymentId                // Delete payment (admin)
+POST   /initiate                  // Initiate payment (M-Pesa or Paystack)
+POST   /webhooks/mpesa            // M-Pesa webhook
+POST   /webhooks/paystack         // Paystack webhook
+GET    /mpesa-status/:checkoutRequestId  // Query M-Pesa payment status
 ```
 
 ---
@@ -726,19 +780,22 @@ GET    /stats                     // Payment statistics
 **Base:** `/api/projects`
 
 ```typescript
-POST   /                          // Create project
-GET    /                          // Get all projects
+POST   /                          // Create project (admin)
+GET    /                          // Get all projects (admin)
+GET    /stats                     // Get project statistics (admin)
+GET    /assigned                  // Get assigned projects
 GET    /client/:clientId          // Get client projects
-GET    /:id                       // Get single project
-PUT    /:id                       // Update project
-DELETE /:id                       // Delete project
-POST   /:id/assign                // Assign team members
-PATCH  /:id/status                // Update status
-PATCH  /:id/progress              // Update progress
-POST   /:id/milestones            // Add milestone
-PUT    /:id/milestones/:milestoneId  // Update milestone
-POST   /:id/attachments           // Upload attachment
-DELETE /:id/attachments/:attachmentId  // Delete attachment
+GET    /:projectId                // Get single project
+PUT    /:projectId                // Update project
+DELETE /:projectId                // Delete project (admin)
+POST   /:projectId/assign         // Assign team members (admin)
+PATCH  /:projectId/status         // Update status
+PATCH  /:projectId/progress       // Update progress
+POST   /:projectId/milestones     // Add milestone
+PATCH  /:projectId/milestones/:milestoneId  // Update milestone
+DELETE /:projectId/milestones/:milestoneId  // Delete milestone
+POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
+DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 ```
 
 ---
@@ -764,13 +821,19 @@ POST   /:id/unpublish             // Unpublish testimonial (admin)
 **Base:** `/api/notifications`
 
 ```typescript
-POST   /                          // Send notification
+POST   /                          // Send notification (admin)
 GET    /                          // Get user notifications
-PATCH  /:id/read                  // Mark as read
+GET    /unread-count              // Get unread count
+GET    /unread                    // Get unread notifications
+GET    /:notificationId           // Get single notification
+PATCH  /:notificationId/read      // Mark as read
+DELETE /:notificationId           // Delete notification
 PATCH  /read-all                  // Mark all as read
-DELETE /:id                       // Delete notification
-POST   /invoice-reminder          // Send invoice reminder
-POST   /payment-confirmation      // Send payment confirmation
+POST   /invoice-reminder          // Send invoice reminder (admin)
+POST   /payment-confirmation      // Send payment confirmation (admin)
+POST   /project-update            // Send project update (admin)
+POST   /bulk                      // Send bulk notification (super admin)
+GET    /category/:category        // Get notifications by category
 ```
 
 ---
@@ -808,14 +871,19 @@ GET    /service-demand            // Service demand
 **Base:** `/api/users`
 
 ```typescript
-POST   /                          // Create admin user (super admin)
-GET    /                          // Get all users
-GET    /:id                       // Get single user
-PUT    /:id                       // Update user
-DELETE /:id                       // Delete user
-PATCH  /:id/toggle-status         // Toggle status
-PATCH  /:id/role                  // Update role
+GET    /profile                   // Get own profile
 PUT    /profile                   // Update own profile
+PUT    /change-password           // Change password
+GET    /notifications             // Get notification preferences
+PUT    /notifications             // Update notification preferences
+POST   /admin-create              // Create admin user (super admin)
+GET    /                          // Get all users (admin)
+GET    /:userId                   // Get single user (admin)
+PUT    /:userId                   // Update user (admin)
+PUT    /:userId/status            // Update user status (super admin)
+PUT    /:userId/admin             // Set user as admin (super admin)
+GET    /:userId/roles             // Get user roles (admin)
+DELETE /:userId                   // Delete user (super admin)
 ```
 
 ---
@@ -834,7 +902,7 @@ sire-api/
 │   │   
 │   ├── models/
 │   │   ├── User.ts
-│   │   ├── Client.ts
+│   │   ├── Role.ts
 │   │   ├── Service.ts
 │   │   ├── Quotation.ts
 │   │   ├── Invoice.ts
@@ -845,7 +913,7 @@ sire-api/
 │   │   └── ContactMessage.ts
 │   ├── controllers/
 │   │   ├── authController.ts
-│   │   ├── clientController.ts
+│   │   ├── roleController.ts
 │   │   ├── serviceController.ts
 │   │   ├── quotationController.ts
 │   │   ├── invoiceController.ts
@@ -858,7 +926,7 @@ sire-api/
 │   │   └── userController.ts
 │   ├── routes/
 │   │   ├── authRoutes.ts
-│   │   ├── clientRoutes.ts
+│   │   ├── roleRoutes.ts
 │   │   ├── serviceRoutes.ts
 │   │   ├── quotationRoutes.ts
 │   │   ├── invoiceRoutes.ts
@@ -870,40 +938,28 @@ sire-api/
 │   │   ├── dashboardRoutes.ts
 │   │   └── userRoutes.ts
 │   ├── middleware/
-│   │   ├── auth.ts              # JWT authentication
-│   │   ├── authorize.ts         # Role-based access
-│   │   ├── validate.ts          # Request validation
+│   │   ├── auth.ts              # JWT authentication and authorization
 │   │   ├── errorHandler.ts     # Error handling
-│   │   └── upload.ts            # File upload
+│   │   ├── authorize.ts         # (Empty - not used)
+│   │   └── validate.ts          # (Empty - not used)
 │   ├── services/
 │   │   ├── internal/
-│   │   │   ├── emailService.ts      # Internal email service
-│   │   │   ├── smsService.ts        # Internal SMS service
-│   │   │   ├── pdfService.ts        # Internal PDF generation
 │   │   │   ├── notificationService.ts # Internal notifications
-│   │   │   ├── fileService.ts       # Internal file handling
-│   │   │   └── analyticsService.ts   # Internal analytics
+│   │   │   └── paymentService.ts      # Payment processing service
 │   │   └── external/
-│   │       ├── daraja.ts            # M-Pesa Daraja API
-│   │       ├── paystack.ts         # Paystack payment gateway
-│   │       ├── stripe.ts           # Stripe payment gateway
-│   │       ├── paypal.ts           # PayPal integration
-│   │       ├── africastalking.ts   # Africa's Talking SMS
-│   │       ├── cloudinary.ts       # Cloudinary file storage
-│   │       ├── nodemailer.ts      # Nodemailer email service
-│   │       └── quickbooks.ts       # QuickBooks integration
+│   │       ├── darajaService.ts       # M-Pesa Daraja API
+│   │       ├── paystackService.ts     # Paystack payment gateway
+│   │       ├── emailService.ts        # Email service (Nodemailer)
+│   │       └── smsService.ts          # SMS service (Africa's Talking)
 │   ├── utils/
-│   │   ├── generatePDF.ts       # PDF generation utilities
-│   │   ├── generateToken.ts     # JWT utilities
-│   │   ├── validators.ts        # Validation schemas
-│   │   ├── helpers.ts           # General helper functions
-│   │   ├── constants.ts         # Application constants
-│   │   └── logger.ts            # Logging utilities 
+│   │   ├── generatePDF.ts       # PDF generation utilities (PDFKit)
+│   │   ├── index.ts             # JWT utilities and OTP generation
+│   │   └── notificationHelper.ts # In-app notification helper 
 │   ├── types/
 │   │   ├── express.d.ts         # Express type extensions
 │   │   └── index.ts             # Custom types
 │   └── index.ts                 # App entry point
-├── @doc/                        # Documentation
+├── doc/                         # Documentation
 ├── .env                         # Environment variables
 ├── .gitignore
 ├── package.json
@@ -915,19 +971,21 @@ sire-api/
 ### Middleware
 
 #### Authentication Middleware
-- `protect` - Verify JWT token
-- `authorize(...roles)` - Role-based access control
-
-#### Validation Middleware
-- `validateRequest` - Validate request body/params/query
+- `authenticateToken` - Verify JWT token and load user
+- `authenticateClientToken` - Verify JWT token for both User and Client
+- `authorizeRoles(allowedRoles)` - Role-based access control
+- `requireAdmin` - Super admin access only
+- `requireOwnershipOrAdmin` - User owns resource OR is admin
+- `requireEmailVerification` - Require verified email
+- `optionalAuth` - Optional authentication (doesn't fail if no token)
 
 #### Error Handling
 - `errorHandler` - Global error handler
-- `asyncHandler` - Async route wrapper
 
 #### File Upload
-- `uploadSingle` - Single file upload
-- `uploadMultiple` - Multiple files upload
+- File upload is handled via `config/cloudinary.ts` with Cloudinary integration
+- **Project Attachments:** Supports multiple file uploads (max 10 files per request, 10MB per file)
+- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
 
 ---
 
@@ -958,16 +1016,17 @@ FROM_NAME=Sire Tech
 AFRICAS_TALKING_API_KEY=your_api_key
 AFRICAS_TALKING_USERNAME=your_username
 
-# M-Pesa
+# M-Pesa (Daraja API)
 MPESA_CONSUMER_KEY=your_consumer_key
 MPESA_CONSUMER_SECRET=your_consumer_secret
 MPESA_SHORTCODE=your_shortcode
 MPESA_PASSKEY=your_passkey
-MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/mpesa/callback
+MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/mpesa
 
-# Stripe
-STRIPE_SECRET_KEY=your_stripe_secret_key
-STRIPE_WEBHOOK_SECRET=your_webhook_secret
+# Paystack
+PAYSTACK_SECRET_KEY=your_paystack_secret_key
+PAYSTACK_PUBLIC_KEY=your_paystack_public_key
+PAYSTACK_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/paystack
 
 # Cloudinary (File Upload)
 CLOUDINARY_CLOUD_NAME=your_cloud_name
@@ -1011,9 +1070,8 @@ CLIENT_URL=http://localhost:3000
 ### Integration Points
 
 1. **Payment Gateways**
-   - M-Pesa (Mobile Money)
-   - Stripe (Cards)
-   - PayPal
+   - M-Pesa (Mobile Money via Daraja API)
+   - Paystack (Cards and Bank Transfer)
 
 2. **Communication**
    - Nodemailer (Email)
@@ -1028,8 +1086,10 @@ CLIENT_URL=http://localhost:3000
    - **Alternative:** Puppeteer for HTML-to-PDF with complex layouts
 
 5. **Future Integrations**
-   - QuickBooks (Accounting)
-   - AI API (Quotation Generation)
+   - Stripe (Cards - future)
+   - PayPal (future)
+   - QuickBooks (Accounting - future)
+   - AI API (Quotation Generation - future)
 
 ---
 
@@ -1358,5 +1418,7 @@ npm start
 
 ---
 
-**Last Updated:** October 2025
+**Last Updated:** January 2025
 **Version:** 1.0.0
+
+**Note:** This documentation has been updated to match the actual implementation in the codebase.

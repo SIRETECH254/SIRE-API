@@ -15,7 +15,7 @@ const quotationSchema = new Schema<IQuotation>({
   },
   client: {
     type: Schema.Types.ObjectId,
-    ref: 'Client',
+    ref: 'User',
     required: [true, 'Client is required']
   },
   items: [{
@@ -88,6 +88,10 @@ const quotationSchema = new Schema<IQuotation>({
   convertedToInvoice: {
     type: Schema.Types.ObjectId,
     ref: 'Invoice'
+  },
+  pdfUrl: {
+    type: String,
+    trim: true
   }
 }, {
   timestamps: true
@@ -117,6 +121,10 @@ quotationSchema.pre('save', function(next) {
   });
 
   (this as any).subtotal = (this as any).items.reduce((sum: number, item: any) => sum + item.total, 0);
+  
+  // Tax and discount are stored as calculated amounts (not percentages)
+  // If they were set as percentages, they should have been converted to amounts in the controller
+  // Here we just use them as-is since they're already calculated amounts
   (this as any).totalAmount = (this as any).subtotal + (this as any).tax - (this as any).discount;
   next();
 });

@@ -2,62 +2,124 @@ import { Request, Response, NextFunction } from 'express';
 import { errorHandler } from '../middleware/errorHandler';
 import Payment from '../models/Payment';
 import Invoice from '../models/Invoice';
-import Client from '../models/Client';
+import User from '../models/User';
+import Role from '../models/Role';
 import { createPaymentRecord, applySuccessfulPayment, initiateMpesaForInvoice, initiatePaystackForInvoice, validatePaymentAmount } from '../services/internal/paymentService';
 import { parseCallback as parseDarajaCallback, queryStkPushStatus } from '../services/external/darajaService';
 import { parseWebhook as parsePaystackWebhook, verifyTransaction } from '../services/external/paystackService';
+import { createInAppNotification } from '../utils/notificationHelper';
 
-export const createPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const createPaymentAdmin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { invoice, client, amount, paymentMethod, transactionId, reference, notes }: {
-            invoice: string;
-            client: string;
+        const io = req.app.get('io');
+        const { invoiceId, method, amount, payerPhone, payerEmail }: {
+            invoiceId: string;
+            method: 'mpesa' | 'paystack';
             amount: number;
-            paymentMethod: 'mpesa' | 'bank_transfer' | 'stripe' | 'paypal' | 'cash';
-            transactionId?: string;
-            reference?: string;
-            notes?: string;
+            payerPhone?: string;
+            payerEmail?: string;
         } = req.body;
 
-        if (!invoice || !client || !amount || !paymentMethod) {
-            return next(errorHandler(400, "Invoice, client, amount, and payment method are required"));
+        if (!invoiceId || !method || !amount) {
+            return next(errorHandler(400, "Invoice ID, method, and amount are required"));
         }
 
-        const invoiceExists = await Invoice.findById(invoice);
-        if (!invoiceExists) {
+        const invoice = await Invoice.findById(invoiceId);
+        if (!invoice) {
             return next(errorHandler(404, "Invoice not found"));
         }
 
-        const remainingBalance = (invoiceExists.totalAmount - invoiceExists.paidAmount);
-        if (amount > remainingBalance) {
-            return next(errorHandler(400, "Payment amount exceeds invoice balance"));
+        if (!validatePaymentAmount(amount, invoice)) {
+            return next(errorHandler(400, "Invalid payment amount"));
         }
 
-        const payment = new Payment({
-            invoice,
-            client,
-            amount,
-            paymentMethod,
-            status: 'completed',
-            transactionId,
-            reference,
-            notes,
-            paymentDate: new Date()
-        });
+        const client = await User.findById(invoice.client);
+        if (!client) {
+            return next(errorHandler(404, "Client not found"));
+        }
 
-        await payment.save();
+        // Create payment record
+        const payment = await createPaymentRecord({ invoice, method, amount, client });
 
-        invoiceExists.paidAmount += amount;
-        await invoiceExists.save();
+        // Handle M-Pesa
+        if (method === 'mpesa') {
+            if (!payerPhone) {
+                return next(errorHandler(400, "Phone number is required for M-Pesa payments"));
+            }
 
-        await payment.populate('client', 'firstName lastName email');
-        await payment.populate('invoice', 'invoiceNumber projectTitle totalAmount');
+            // Normalize phone number to E.164 format (254XXXXXXXXX)
+            const digitsOnly = String(payerPhone).replace(/[^0-9]/g, '');
+            let msisdn = digitsOnly;
+            if (msisdn.startsWith('0')) {
+                msisdn = `254${msisdn.slice(1)}`;
+            }
+            if (!msisdn.startsWith('254')) {
+                if (digitsOnly.startsWith('254')) msisdn = digitsOnly;
+            }
+            if (!/^254\d{9}$/.test(msisdn)) {
+                return next(errorHandler(400, "Invalid Kenyan phone format. Use 2547XXXXXXXX"));
+            }
 
-        res.status(201).json({ success: true, message: "Payment recorded successfully", data: { payment } });
+            const baseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = `${baseUrl}/api/payments/webhooks/mpesa`;
+
+            const { merchantRequestId, checkoutRequestId } = await initiateMpesaForInvoice({
+                invoice,
+                payment,
+                amount,
+                phone: msisdn,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+                success: true, 
+                message: "M-Pesa payment initiated",
+                data: { 
+                    paymentId: payment._id, 
+                    status: payment.status,
+                    daraja: { merchantRequestId, checkoutRequestId }
+                } 
+            });
+            return;
+        }
+
+        // Handle Paystack
+        if (method === 'paystack') {
+            if (!payerEmail) {
+                return next(errorHandler(400, "Email is required for Paystack payments"));
+            }
+
+            const baseUrl = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+            const callback = `${baseUrl}/payments/callback`;
+
+            const { authorizationUrl, reference } = await initiatePaystackForInvoice({
+                invoice,
+                payment,
+                amount,
+                email: payerEmail,
+                callbackUrl: callback
+            });
+
+            io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            res.status(202).json({ 
+                success: true, 
+                message: "Paystack payment initiated",
+                data: { 
+                    paymentId: payment._id,
+                    status: payment.status,
+                    authorizationUrl,
+                    reference 
+                } 
+            });
+            return;
+        }
+
+        return next(errorHandler(400, "Unsupported payment method"));
 
     } catch (error: any) {
-        console.error('Create payment error:', error);
-        next(errorHandler(500, "Server error while creating payment"));
+        console.error('Create payment admin error:', error);
+        next(errorHandler(500, "Server error while initiating payment"));
     }
 };
 
@@ -205,7 +267,7 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
         const io = req.app.get('io');
         const { invoiceId, method, amount, payerPhone, payerEmail, callbackUrl }: {
             invoiceId: string;
-            method: 'mpesa' | 'paystack' | 'cash' | 'bank_transfer';
+            method: 'mpesa' | 'paystack';
             amount: number;
             payerPhone?: string;
             payerEmail?: string;
@@ -230,28 +292,13 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
         }
 
         // Get client information
-        const client = await Client.findById(invoice.client);
+        const client = await User.findById(invoice.client);
         if (!client) {
             return next(errorHandler(404, "Client not found"));
         }
 
         // Create payment record
         const payment = await createPaymentRecord({ invoice, method, amount, client });
-
-        // Handle offline methods
-        if (['cash', 'bank_transfer'].includes(method)) {
-            payment.status = 'completed';
-            await payment.save();
-
-            await applySuccessfulPayment({ invoice, payment, io, method });
-            
-            res.status(200).json({ 
-                success: true, 
-                message: "Payment recorded successfully",
-                data: { paymentId: payment._id, status: payment.status } 
-            });
-            return;
-        }
 
         // Handle M-Pesa
         if (method === 'mpesa') {
@@ -288,7 +335,7 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
                 success: true, 
                 message: "M-Pesa payment initiated",
                 data: { 
-                    paymentId: payment._id, 
+                    paymentId: payment._id,
                     status: payment.status,
                     daraja: { merchantRequestId, checkoutRequestId }
                 } 
@@ -315,14 +362,14 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
 
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
             res.status(202).json({ 
-                success: true, 
+                success: true,
                 message: "Paystack payment initiated",
-                data: { 
+                data: {
                     paymentId: payment._id, 
                     status: payment.status,
                     authorizationUrl,
                     reference 
-                } 
+                }
             });
             return;
         }
@@ -331,12 +378,15 @@ export const initiatePayment = async (req: Request, res: Response, next: NextFun
 
     } catch (error: any) {
         console.error('Initiate payment error:', error);
-        next(errorHandler(500, "Server error while initiating payment"));
+        console.error('Error stack:', error.stack);
+        console.error('Error message:', error.message);
+        const errorMessage = error.message || "Server error while initiating payment";
+        next(errorHandler(500, errorMessage));
     }
 };
 
 // M-Pesa Webhook
-export const mpesaWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const mpesaWebhook = async (req: Request, res: Response, next: NextFunction): Promise<void> => { 
     try {
         const io = req.app.get('io');
         const payload = req.body;
@@ -379,6 +429,56 @@ export const mpesaWebhook = async (req: Request, res: Response, next: NextFuncti
             payment.status = 'failed';
             await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'User',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });
@@ -421,6 +521,56 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
             payment.status = 'failed';
             await payment.save();
             io?.emit('payment.updated', { paymentId: payment._id.toString(), status: payment.status });
+            
+            // Send notification to client for payment failure
+            try {
+                const invoice = await Invoice.findById(payment.invoice);
+                if (invoice) {
+                    await createInAppNotification({
+                        recipient: payment.client.toString(),
+                        recipientModel: 'User',
+                        category: 'payment',
+                        subject: 'Payment Failed',
+                        message: `Your payment of $${payment.amount.toFixed(2)} for invoice ${invoice.invoiceNumber} failed. Please try again or contact support.`,
+                        actions: [
+                            {
+                                id: 'retry_payment',
+                                label: 'Try Again',
+                                type: 'api',
+                                endpoint: '/api/payments/initiate',
+                                method: 'POST',
+                                payload: {
+                                    invoiceId: invoice._id.toString(),
+                                    amount: payment.amount
+                                },
+                                variant: 'primary'
+                            },
+                            {
+                                id: 'view_invoice',
+                                label: 'View Invoice',
+                                type: 'navigate',
+                                route: `/invoices/${invoice._id}`,
+                                variant: 'secondary'
+                            }
+                        ],
+                        context: {
+                            resourceId: invoice._id.toString(),
+                            resourceType: 'invoice'
+                        },
+                        metadata: {
+                            paymentId: payment._id,
+                            invoiceId: invoice._id,
+                            invoiceNumber: invoice.invoiceNumber,
+                            amount: payment.amount,
+                            error: 'Payment processing failed'
+                        },
+                        io: io
+                    });
+                }
+            } catch (notificationError) {
+                console.error('Error sending notification:', notificationError);
+                // Don't fail the request if notification fails
+            }
         }
 
         res.status(200).json({ success: true });
@@ -428,48 +578,6 @@ export const paystackWebhook = async (req: Request, res: Response, next: NextFun
     } catch (error: any) {
         console.error('Paystack webhook error:', error);
         next(errorHandler(500, "Server error processing Paystack webhook"));
-    }
-};
-
-// Query M-Pesa Status
-export const queryMpesaStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-        const { paymentId } = req.params;
-        const { invoiceId } = req.query;
-
-        let payment = await Payment.findById(paymentId);
-        if (!payment && invoiceId) {
-            payment = await Payment.findOne({ invoice: invoiceId, paymentMethod: 'mpesa' }).sort({ createdAt: -1 });
-        }
-
-        if (!payment) {
-            return next(errorHandler(404, "Payment not found"));
-        }
-
-        const checkoutRequestId = payment?.processorRefs?.daraja?.checkoutRequestId;
-        if (!checkoutRequestId) {
-            return next(errorHandler(400, "No M-Pesa reference for this payment"));
-        }
-
-        const result = await queryStkPushStatus({ checkoutRequestId });
-        if (!result.ok) {
-            return next(errorHandler(502, result.error || "Failed to query M-Pesa status"));
-        }
-
-        const status = result.resultCode === 0 ? 'completed' : (payment.status === 'completed' ? 'completed' : 'pending');
-        
-        res.status(200).json({ 
-            success: true, 
-            data: { 
-                status, 
-                resultCode: result.resultCode, 
-                resultDesc: result.resultDesc 
-            } 
-        });
-
-    } catch (error: any) {
-        console.error('Query M-Pesa status error:', error);
-        next(errorHandler(500, "Server error while querying M-Pesa status"));
     }
 };
 
@@ -495,14 +603,16 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
             return next(errorHandler(502, result.error || "Failed to query M-Pesa status"));
         }
 
-        console.log('===== SAFARICOM QUERY RESULT =====');
-        console.log('Result Code:', result.resultCode);
-        console.log('Result Desc:', result.resultDesc);
-        console.log('==================================');
+        // Convert resultCode to string to ensure consistency
+        const resultCode = String(result.resultCode ?? '');
+        const resultDesc = String(result.resultDesc ?? '');
 
-        const status = result.resultCode === 0 ? 'completed' : 'failed';
+        console.log('===== SAFARICOM QUERY RESULT =====');
+        console.log('Result Code:', resultCode);
+        console.log('Result Desc:', resultDesc);
+        console.log('==================================');
         
-        if (result.resultCode === 0 && payment.status !== 'completed') {
+        if (resultCode === '0' && payment.status !== 'completed') {
             const invoice = await Invoice.findById(payment.invoice);
             if (invoice) {
                 await applySuccessfulPayment({ 
@@ -512,7 +622,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
                     method: 'mpesa' 
                 });
             }
-        } else if (result.resultCode !== 0 && payment.status !== 'failed') {
+
+            console.log("paymentstatus", payment.status)
+            
+        } else if (resultCode !== '0' && payment.status !== 'failed') {
             payment.status = 'failed';
             await payment.save();
             req.app.get('io')?.emit('payment.updated', { 
@@ -524,11 +637,10 @@ export const queryMpesaByCheckoutId = async (req: Request, res: Response, next: 
         res.status(200).json({ 
             success: true, 
             data: { 
-                status, 
-                resultCode: result.resultCode, 
-                resultDesc: result.resultDesc,
-                paymentId: payment._id,
-                invoiceId: payment.invoice,
+                resultCode: resultCode, 
+                resultDesc: resultDesc,
+                paymentId: payment._id.toString(),
+                invoiceId: payment.invoice.toString(),
                 raw: result.raw
             } 
         });

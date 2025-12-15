@@ -27,7 +27,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
         const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
 
         // Get user with roles populated
-        const user = await User.findById(decoded.userId);
+        const user = await User.findById(decoded.userId).populate('roles', 'name displayName');
 
         if (!user) {
             return next(errorHandler(401, "User not found"));
@@ -37,8 +37,16 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
             return next(errorHandler(401, "User account is deactivated"));
         }
 
-        // Add user to request object
-        req.user = user as IUserResponse;
+        // Extract role names for response
+        const roleNames = user.roles && Array.isArray(user.roles)
+            ? user.roles.map((role: any) => role.name || role)
+            : [];
+
+        // Add user to request object with role names
+        req.user = {
+            ...user.toObject(),
+            roleNames
+        } as IUserResponse;
         next();
 
     } catch (error: any) {
@@ -59,10 +67,13 @@ export const authorizeRoles = (allowedRoles: string[] = []): ((req: Request, res
                 return next(errorHandler(401, "Authentication required"));
             }
 
-            // Check if user has any of the allowed roles
-            const userRole = req.user.role || '';
+            // Get user role names from populated roles or from roleNames field
+            const userRoleNames = req.user.roleNames || [];
 
-            if (!allowedRoles.includes(userRole)) {
+            // Check if user has any of the allowed roles
+            const hasAllowedRole = allowedRoles.some(role => userRoleNames.includes(role));
+
+            if (!hasAllowedRole) {
                 return next(errorHandler(403, "Insufficient permissions"));
             }
 
@@ -80,7 +91,9 @@ export const requireAdmin = (req: Request, res: Response, next: NextFunction): v
             return next(errorHandler(401, "Authentication required"));
         }
 
-        if (req.user.role !== 'super_admin') {
+        // Check if user has super_admin role
+        const userRoleNames = req.user.roleNames || [];
+        if (!userRoleNames.includes('super_admin')) {
             return next(errorHandler(403, "Admin access required"));
         }
 
@@ -99,7 +112,8 @@ export const requireOwnershipOrAdmin = (resourceUserIdField: string = 'userId') 
             }
 
             // Super admin can access everything
-            if (req.user.role === 'super_admin') {
+            const userRoleNames = req.user.roleNames || [];
+            if (userRoleNames.includes('super_admin')) {
                 return next();
             }
 
@@ -151,11 +165,17 @@ export const optionalAuth = async (req: Request, res: Response, next: NextFuncti
         // Verify token
         const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
 
-        // Get user
-        const user = await User.findById(decoded.userId);
+        // Get user with roles populated
+        const user = await User.findById(decoded.userId).populate('roles', 'name displayName');
 
         if (user && user.isActive) {
-            req.user = user as IUserResponse;
+            const roleNames = user.roles && Array.isArray(user.roles)
+                ? user.roles.map((role: any) => role.name || role)
+                : [];
+            req.user = {
+                ...user.toObject(),
+                roleNames
+            } as IUserResponse;
         }
 
         next();
@@ -164,3 +184,4 @@ export const optionalAuth = async (req: Request, res: Response, next: NextFuncti
         next();
     }
 };
+
