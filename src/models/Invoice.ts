@@ -4,7 +4,7 @@ import type { IInvoice } from '../types/index';
 const invoiceSchema = new Schema<IInvoice>({
   invoiceNumber: {
     type: String,
-    required: [true, 'Invoice number is required'],
+    required: false, // Will be auto-generated in pre-save hook
     unique: true,
     trim: true
   },
@@ -94,6 +94,12 @@ const invoiceSchema = new Schema<IInvoice>({
     trim: true,
     maxlength: [500, 'Notes cannot exceed 500 characters']
   },
+  pdf: {
+    url: {
+      type: String,
+      trim: true
+    }
+  },
   createdBy: {
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -103,6 +109,7 @@ const invoiceSchema = new Schema<IInvoice>({
   timestamps: true
 });
 
+invoiceSchema.index({ invoiceNumber: 1 }); // Already unique, but explicit index helps performance
 invoiceSchema.index({ client: 1 });
 invoiceSchema.index({ status: 1 });
 invoiceSchema.index({ createdBy: 1 });

@@ -24,7 +24,7 @@ The SIRE Tech API Invoice Management System handles all invoice-related operatio
 - **Item Management** - Multiple line items with descriptions and pricing
 - **Financial Calculations** - Subtotal, tax, discount, total automation
 - **Payment Tracking** - Track paid amount and status
-- **PDF Generation** - Professional invoice PDFs with company branding
+- **PDF Generation & Storage** - Professional invoice PDFs with company branding, uploaded to Cloudinary
 - **Email Delivery** - Send invoices directly to clients
 - **Payment Status** - Draft, sent, paid, partially paid, overdue, cancelled
 - **Due Date Management** - Set payment deadlines
@@ -58,8 +58,8 @@ interface IInvoice {
     total: number;               // Auto-calculated
   }>;
   subtotal: number;              // Auto-calculated
-  tax: number;                   // Amount
-  discount: number;              // Amount
+  tax: number;                   // Calculated amount (percentage input)
+  discount: number;              // Calculated amount (percentage input)
   totalAmount: number;           // Auto-calculated
   paidAmount: number;            // Amount paid so far
   status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled';
@@ -67,6 +67,9 @@ interface IInvoice {
   paidDate?: Date;               // Date when fully paid
   notes?: string;
   createdBy: ObjectId;           // Reference to User
+  pdf?: {                        // Browser-accessible PDF info
+    url: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,7 +85,8 @@ interface IInvoice {
 - **Status Management** - Automatic status updates based on payments
 - **Overdue Detection** - Auto-detect overdue invoices
 - **Audit Trail** - Created by and timestamps
-- **PDF Generation** - Professional formatted PDFs
+- **PDF Generation & Storage** - Professional PDFs uploaded to Cloudinary with stored URL
+- **Tax/Discount Input** - API accepts percentages; stored as calculated amounts
 - **Email Integration** - Direct email delivery
 
 ### Validation Rules
@@ -105,6 +109,7 @@ createdBy: { required: true, ref: 'User' }
 quotation: { ref: 'Quotation' }
 paidDate: { type: Date }
 notes: { maxlength: 500 }
+pdf: { url: { type: String } }
 ```
 
 ### Model Implementation
@@ -207,6 +212,12 @@ const invoiceSchema = new Schema<IInvoice>({
     type: String,
     trim: true,
     maxlength: [500, 'Notes cannot exceed 500 characters']
+  },
+  pdf: {
+    url: {
+      type: String,
+      trim: true
+    }
   },
   createdBy: {
     type: Schema.Types.ObjectId,
@@ -330,6 +341,7 @@ import { createInAppNotification } from '../utils/notificationHelper';
 
 **Notifications:**
 - **Client** receives in-app notification: "New Invoice Created" with invoice number, amount, and due date
+- **Automatic PDF:** PDF is generated/uploaded on creation and `pdf.url` is stored
 
 **Important:** 
 - Only `quotation` ID is required in request body
@@ -563,7 +575,10 @@ export const getInvoice = async (req: Request, res: Response, next: NextFunction
 - Cannot update after full payment
 **Process:**
 - Validate status (cannot update paid invoices)
-- Recalculate totals
+- Recalculate item totals and subtotal
+- Interpret `tax` / `discount` inputs as **percentages of subtotal** (e.g., `10` means 10% of subtotal) and store the calculated amounts
+- Recalculate total amount
+- Always regenerate/upload PDF and store in `pdf.url`
 - Save changes
 **Response:** Updated invoice data
 
@@ -595,11 +610,33 @@ export const updateInvoice = async (req: Request, res: Response, next: NextFunct
         // Update allowed fields
         if (projectTitle) invoice.projectTitle = projectTitle;
         if (items) invoice.items = items;
-        if (tax !== undefined) invoice.tax = tax;
-        if (discount !== undefined) invoice.discount = discount;
+
+        // Recalculate item totals and subtotal
+        invoice.items.forEach((item: any) => {
+            item.total = item.quantity * item.unitPrice;
+        });
+        const subtotal = invoice.items.reduce((sum: number, item: any) => sum + item.total, 0);
+        invoice.subtotal = subtotal;
+
+        // Calculate tax/discount as percentages of subtotal
+        if (tax !== undefined) {
+            invoice.tax = subtotal * (tax / 100);
+        }
+        if (discount !== undefined) {
+            invoice.discount = subtotal * (discount / 100);
+        }
+
+        // Recalculate total
+        invoice.totalAmount = invoice.subtotal + invoice.tax - invoice.discount;
+
         if (dueDate) invoice.dueDate = dueDate;
         if (notes) invoice.notes = notes;
 
+        await invoice.save();
+
+        // Regenerate/upload PDF and store url
+        const pdfUrl = await uploadInvoicePDF(invoice);
+        invoice.pdf = { url: pdfUrl };
         await invoice.save();
 
         res.status(200).json({
@@ -924,9 +961,9 @@ export const cancelInvoice = async (req: Request, res: Response, next: NextFunct
 **Process:**
 - Fetch invoice with populated data (client, quotation, createdBy)
 - Generate professional PDF with tables
-- Upload PDF to Cloudinary as raw file
+- Upload PDF to Cloudinary as raw file, store in `pdf.url`
 - Return PDF URL
-**Response:** JSON with PDF URL
+**Response:** JSON with PDF URL and persisted `pdf.url`
 
 **Controller Implementation:**
 ```typescript
@@ -943,59 +980,10 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
             return next(errorHandler(404, "Invoice not found"));
         }
 
-        // Generate PDF
         const pdfBuffer = await generateInvoicePDF(invoice);
-
-        // Upload PDF to Cloudinary as raw file
-        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
-        
-        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
-                {
-                    folder: 'sire-tech/invoices',
-                    resource_type: 'raw',
-                    public_id: fileName,
-                    type: 'upload',
-                    overwrite: true,
-                    invalidate: true,
-                    access_mode: 'public',
-                    use_filename: true,
-                    unique_filename: false
-                },
-                (error, result) => {
-                    if (error) {
-                        console.error('Cloudinary upload error:', error);
-                        reject(error);
-                    } else if (result) {
-                        resolve({
-                            secure_url: result.secure_url || '',
-                            url: result.url || '',
-                            public_id: result.public_id || ''
-                        });
-                    } else {
-                        reject(new Error('Upload failed: No result returned'));
-                    }
-                }
-            );
-            uploadStream.end(pdfBuffer);
-        });
-
-        // Construct PDF URL with .pdf extension
-        let pdfUrl = uploadResult.secure_url || uploadResult.url;
-        if (!pdfUrl) {
-            const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
-                ? uploadResult.public_id 
-                : `sire-tech/invoices/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
-        } else {
-            if (!pdfUrl.includes('.pdf')) {
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
-        }
+        const pdfUrl = await uploadInvoicePDF(invoice, pdfBuffer);
+        invoice.pdf = { url: pdfUrl };
+        await invoice.save();
 
         res.status(200).json({
             success: true,
@@ -1015,8 +1003,8 @@ export const generateInvoicePDFController = async (req: Request, res: Response, 
 **Access:** Admin users (super_admin, finance)
 **Process:**
 - Fetch invoice with populated client and quotation
-- Generate PDF
-- Upload PDF to Cloudinary
+- Generate PDF (reuse existing `pdf.url` if already present, otherwise generate & upload)
+- Upload PDF to Cloudinary and store `pdf.url`
 - Send email with PDF attachment and URL
 - Update status to 'sent' if currently 'draft'
 - **Send bidirectional in-app notification to client** (invoice sent with actions)
@@ -1052,59 +1040,11 @@ export const sendInvoice = async (req: Request, res: Response, next: NextFunctio
             return next(errorHandler(400, "Client email is required to send invoice"));
         }
 
-        // Generate PDF
+        // Generate/upload PDF (reuse existing url when available)
         const pdfBuffer = await generateInvoicePDF(invoice);
-
-        // Upload PDF to Cloudinary
-        const fileName = `invoice-${invoice.invoiceNumber || invoiceId}`;
-        
-        const uploadResult = await new Promise<{ secure_url: string; url: string; public_id: string }>((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
-                {
-                    folder: 'sire-tech/invoices',
-                    resource_type: 'raw',
-                    public_id: fileName,
-                    type: 'upload',
-                    overwrite: true,
-                    invalidate: true,
-                    access_mode: 'public',
-                    use_filename: true,
-                    unique_filename: false
-                },
-                (error, result) => {
-                    if (error) {
-                        console.error('Cloudinary upload error:', error);
-                        reject(error);
-                    } else if (result) {
-                        resolve({
-                            secure_url: result.secure_url || '',
-                            url: result.url || '',
-                            public_id: result.public_id || ''
-                        });
-                    } else {
-                        reject(new Error('Upload failed: No result returned'));
-                    }
-                }
-            );
-            uploadStream.end(pdfBuffer);
-        });
-
-        // Construct PDF URL with .pdf extension
-        let pdfUrl = uploadResult.secure_url || uploadResult.url;
-        if (!pdfUrl) {
-            const publicId = uploadResult.public_id.includes('sire-tech/invoices') 
-                ? uploadResult.public_id 
-                : `sire-tech/invoices/${uploadResult.public_id}`;
-            pdfUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}.pdf`;
-        } else {
-            if (!pdfUrl.includes('.pdf')) {
-                if (pdfUrl.includes('?')) {
-                    pdfUrl = pdfUrl.replace('?', '.pdf?');
-                } else {
-                    pdfUrl += '.pdf';
-                }
-            }
-        }
+        const pdfUrl = invoice.pdf?.url || await uploadInvoicePDF(invoice, pdfBuffer);
+        invoice.pdf = { url: pdfUrl };
+        await invoice.save();
 
         // Send email to client
         await sendInvoiceEmail(client.email, invoice, pdfUrl, pdfBuffer);
@@ -1293,6 +1233,9 @@ export default router;
       "paidAmount": 0,
       "status": "draft",
       "dueDate": "2025-12-31T00:00:00.000Z",
+      "pdf": {
+        "url": "https://res.cloudinary.com/your-cloud/raw/upload/v1234567890/sire-tech/invoices/invoice-INV-2025-0001.pdf"
+      },
       "createdBy": {...},
       "createdAt": "2025-01-01T00:00:00.000Z"
     }
@@ -1441,6 +1384,9 @@ export default router;
       "status": "sent",
       "dueDate": "2025-12-31T00:00:00.000Z",
       "notes": "Payment terms: Net 30",
+      "pdf": {
+        "url": "https://res.cloudinary.com/your-cloud/raw/upload/v1234567890/sire-tech/invoices/invoice-INV-2025-0001.pdf"
+      },
       "createdBy": {...},
       "createdAt": "2025-01-01T00:00:00.000Z"
     }
@@ -1470,6 +1416,10 @@ export default router;
   "notes": "Updated notes"
 }
 ```
+
+**Notes:**
+- `tax` and `discount` are **percentages of subtotal** (e.g., `10` means 10% of subtotal). The API stores the calculated amounts.
+- PDF is regenerated on every update and stored at `pdf.url`.
 
 **Response:**
 ```json

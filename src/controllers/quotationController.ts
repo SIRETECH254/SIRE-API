@@ -7,7 +7,7 @@ import Invoice from '../models/Invoice';
 import Project from '../models/Project';
 import { sendQuotationEmail } from '../services/external/emailService';
 import { createInAppNotification } from '../utils/notificationHelper';
-import { uploadQuotationPDF } from '../utils/pdfUpload';
+import { uploadQuotationPDF, uploadInvoicePDF } from '../utils/pdfUpload';
 
 export const createQuotation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
@@ -551,6 +551,20 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
 
         await invoice.save();
 
+        // Populate references for PDF/notifications
+        await invoice.populate('client', 'firstName lastName email company phone address city country');
+        await invoice.populate('quotation', 'quotationNumber');
+        await invoice.populate('createdBy', 'firstName lastName email');
+
+        // Generate and upload PDF for the new invoice
+        try {
+            const pdfUrl = await uploadInvoicePDF(invoice);
+            invoice.pdf = { url: pdfUrl };
+            await invoice.save();
+        } catch (pdfError: any) {
+            console.error('Error generating invoice PDF during conversion:', pdfError);
+        }
+
         // Update project with invoice reference
         if (quotation.project) {
             const project = await Project.findById(quotation.project);
@@ -563,8 +577,6 @@ export const convertToInvoice = async (req: Request, res: Response, next: NextFu
         quotation.status = 'converted';
         quotation.convertedToInvoice = invoice._id as any;
         await quotation.save();
-
-        await invoice.populate('client', 'firstName lastName email company');
 
         // Send notifications to client and admin
         try {

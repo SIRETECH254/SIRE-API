@@ -192,6 +192,9 @@ export interface IInvoice extends Document {
   paidDate?: Date;
   notes?: string;
   createdBy: Types.ObjectId; // Reference to User
+  pdf?: {
+    url: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
