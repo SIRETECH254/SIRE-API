@@ -109,7 +109,8 @@ const invoiceSchema = new Schema<IInvoice>({
   timestamps: true
 });
 
-invoiceSchema.index({ invoiceNumber: 1 }); // Already unique, but explicit index helps performance
+// Indexes for better performance
+// Note: invoiceNumber already has unique: true which creates an index automatically
 invoiceSchema.index({ client: 1 });
 invoiceSchema.index({ status: 1 });
 invoiceSchema.index({ createdBy: 1 });
