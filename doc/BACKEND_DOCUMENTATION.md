@@ -25,22 +25,34 @@
 ### Core Dependencies
 ```json
 {
-  "africastalking": "^0.7.3",
-  "axios": "^1.10.0",
+  "@types/bcryptjs": "^2.4.6",
+  "@types/cors": "^2.8.19",
+  "@types/express": "^5.0.3",
+  "@types/jsonwebtoken": "^9.0.10",
+  "@types/multer": "^2.0.0",
+  "@types/node": "^24.5.2",
+  "@types/nodemailer": "^7.0.2",
+  "@types/pdfkit": "^0.17.3",
+  "@types/stream-buffers": "^3.0.8",
+  "@types/swagger-jsdoc": "^6.0.4",
+  "@types/swagger-ui-express": "^4.1.8",
+  "@types/validator": "^13.15.3",
+  "africastalking": "^0.7.7",
+  "axios": "^1.12.2",
   "bcryptjs": "^3.0.2",
-  "cloudinary": "^1.41.0",
+  "cloudinary": "^1.41.3",
   "cors": "^2.8.5",
-  "dotenv": "^17.1.0",
-  "express": "^4.18.2",
-  "joi": "^18.0.0",
+  "dotenv": "^17.2.3",
+  "express": "^4.21.2",
+  "joi": "^18.0.1",
   "jsonwebtoken": "^9.0.2",
-  "mongoose": "^8.16.2",
+  "mongoose": "^8.18.3",
   "mongoose-paginate-v2": "^1.9.1",
-  "multer": "^2.0.1",
+  "multer": "^2.0.2",
   "multer-storage-cloudinary": "^4.0.0",
-  "nodemailer": "^7.0.5",
+  "nodemailer": "^7.0.6",
   "nodemon": "^3.1.10",
-  "pdfkit": "^0.17.1",
+  "pdfkit": "^0.17.2",
   "socket.io": "^4.8.1",
   "stream-buffers": "^3.0.3",
   "swagger-jsdoc": "^6.2.8",
@@ -53,14 +65,7 @@
 ```json
 {
   "typescript": "^5.9.2",
-  "tsx": "^4.20.5",
-  "@types/node": "^24.5.2",
-  "@types/express": "^5.0.0",
-  "@types/cors": "^2.8.17",
-  "@types/bcryptjs": "^2.4.6",
-  "@types/jsonwebtoken": "^9.0.6",
-  "@types/nodemailer": "^6.4.15",
-  "@types/multer": "^1.4.11"
+  "tsx": "^4.20.5"
 }
 ```
 
@@ -75,8 +80,8 @@ interface IUser {
   firstName: string;
   lastName: string;
   email: string;
-  password: string;
-  roles: ObjectId[]; // Array of Role references
+  password: string; // select: false
+  roles: ObjectId[]; // Role references
   phone: string;
   company?: string;
   address?: string;
@@ -86,10 +91,10 @@ interface IUser {
   emailVerified: boolean;
   avatar?: string | null;
   avatarPublicId?: string | null;
-  otpCode?: string;
-  otpExpiry?: Date;
-  resetPasswordToken?: string;
-  resetPasswordExpiry?: Date;
+  otpCode?: string; // select: false
+  otpExpiry?: Date; // select: false
+  resetPasswordToken?: string; // select: false
+  resetPasswordExpiry?: Date; // select: false
   lastLoginAt?: Date;
   notificationPreferences?: {
     email?: boolean;
@@ -102,20 +107,9 @@ interface IUser {
 ```
 
 **Fields:**
-- `firstName`, `lastName` - User name
-- `email` - Unique, required
-- `password` - Hashed password
-- `roles` - Array of Role ObjectIds (at least one required)
-- `phone` - Contact number (required)
-- `company` - Business name (optional, for clients)
-- `address`, `city`, `country` - Location details (optional, for clients)
-- `isActive` - Account status
-- `emailVerified` - Email verification status
-- `avatar` - Profile image URL (optional)
-- `avatarPublicId` - Cloudinary public ID for avatar (optional)
-- OTP and password reset fields
-- Activity tracking and notification preferences
-- Timestamps
+- `roles` - Role references (default assigned in `authController.register`)
+- `password`, `otpCode`, `otpExpiry`, `resetPasswordToken`, `resetPasswordExpiry` - Not returned in queries by default
+- Virtuals: `fullName`, `primaryRole`
 
 ---
 
@@ -124,31 +118,18 @@ interface IUser {
 interface IRole {
   _id: ObjectId;
   name: string; // Unique, lowercase (e.g., 'super_admin', 'client')
-  displayName: string; // Human-readable name
+  displayName: string;
   description?: string;
-  permissions: string[]; // Array of permission strings
+  permissions: string[];
   isActive: boolean;
-  isSystemRole: boolean; // True for system roles that cannot be deleted
+  isSystemRole: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**Fields:**
-- `name` - Unique role identifier (lowercase, required)
-- `displayName` - Human-readable role name (required)
-- `description` - Role description (optional)
-- `permissions` - Array of permission strings (e.g., ['user:read', 'project:create'])
-- `isActive` - Role status (default: true)
-- `isSystemRole` - System role flag (prevents deletion, default: false)
-- Timestamps
-
-**System Roles:**
-- `super_admin` - Full system access
-- `finance` - Financial operations access
-- `project_manager` - Project management access
-- `staff` - Basic staff access
-- `client` - External client/customer access (default for new registrations)
+**Notes:**
+- System roles cannot be deleted (`isSystemRole` enforced in model hooks).
 
 ---
 
@@ -161,20 +142,11 @@ interface IService {
   features: string[];
   isActive: boolean;
   icon?: string;
-  createdBy: ObjectId; // Reference to User
+  createdBy: ObjectId; // User reference
   createdAt: Date;
   updatedAt: Date;
 }
 ```
-
-**Fields:**
-- `title` - Service name (unique, required)
-- `description` - Detailed description
-- `features` - Array of service features (at least one required)
-- `isActive` - Visibility status (default: true)
-- `icon` - Service icon/image URL (optional)
-- `createdBy` - Admin who created it
-- Timestamps
 
 ---
 
@@ -182,9 +154,9 @@ interface IService {
 ```typescript
 interface IQuotation {
   _id: ObjectId;
-  quotationNumber: string; // Auto-generated (QT-2025-0001)
-  project: ObjectId; // Reference to Project
-  client: ObjectId; // Reference to User
+  quotationNumber: string; // Auto-generated (QT-YYYY-0001)
+  project: ObjectId;
+  client: ObjectId;
   items: Array<{
     description: string;
     quantity: number;
@@ -192,34 +164,23 @@ interface IQuotation {
     total: number;
   }>;
   subtotal: number;
-  tax: number;
-  discount: number;
+  tax: number; // amount, not percentage
+  discount: number; // amount, not percentage
   totalAmount: number;
   status: 'pending' | 'sent' | 'accepted' | 'rejected' | 'converted';
   validUntil: Date;
   notes?: string;
-  createdBy: ObjectId; // Reference to User
-  convertedToInvoice?: ObjectId; // Reference to Invoice
+  createdBy: ObjectId;
+  convertedToInvoice?: ObjectId;
+  pdfUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**Fields:**
-- `quotationNumber` - Unique identifier (auto-generated)
-- `project` - Reference to Project model
-- `client` - Reference to User (with client role)
-- `items` - Array of quotation items with description, quantity, unitPrice, and total
-- `subtotal` - Sum of all item totals (auto-calculated)
-- `tax` - Tax amount (default: 0)
-- `discount` - Discount amount (default: 0)
-- `totalAmount` - Final amount (auto-calculated: subtotal + tax - discount)
-- `status` - Quotation lifecycle status
-- `validUntil` - Expiration date
-- `notes` - Additional information (optional, max 500 characters)
-- `createdBy` - Admin who created it
-- `convertedToInvoice` - Invoice reference (if converted)
-- Timestamps
+**Notes:**
+- Totals are recalculated in pre-save hooks.
+- `quotationNumber` is generated automatically if missing.
 
 ---
 
@@ -227,9 +188,9 @@ interface IQuotation {
 ```typescript
 interface IInvoice {
   _id: ObjectId;
-  invoiceNumber: string; // Auto-generated (INV-2025-0001)
-  client: ObjectId; // Reference to User
-  quotation?: ObjectId; // Reference to Quotation (if converted)
+  invoiceNumber: string; // Auto-generated (INV-YYYY-0001)
+  client: ObjectId;
+  quotation?: ObjectId;
   projectTitle: string;
   items: Array<{
     description: string;
@@ -238,34 +199,24 @@ interface IInvoice {
     total: number;
   }>;
   subtotal: number;
-  tax: number;
-  discount: number;
+  tax: number; // amount
+  discount: number; // amount
   totalAmount: number;
   paidAmount: number;
   status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled';
   dueDate: Date;
   paidDate?: Date;
   notes?: string;
-  createdBy: ObjectId; // Reference to User
+  pdf?: { url?: string };
+  createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**Fields:**
-- `invoiceNumber` - Unique identifier
-- `client` - Reference to User (with client role)
-- `quotation` - Source quotation (optional)
-- `projectTitle` - Project name
-- `items` - Billing items
-- `subtotal`, `tax`, `discount`, `totalAmount` - Pricing breakdown
-- `paidAmount` - Amount paid so far
-- `status` - Payment status
-- `dueDate` - Payment deadline
-- `paidDate` - When fully paid
-- `notes` - Additional information
-- `createdBy` - Admin who created it
-- Timestamps
+**Notes:**
+- `invoiceNumber` is generated in a pre-validate hook.
+- `remainingBalance` is a virtual field.
 
 ---
 
@@ -273,9 +224,9 @@ interface IInvoice {
 ```typescript
 interface IPayment {
   _id: ObjectId;
-  paymentNumber: string; // Auto-generated (PAY-2025-0001)
-  invoice: ObjectId; // Reference to Invoice
-  client: ObjectId; // Reference to User
+  paymentNumber: string; // Auto-generated (PAY-YYYY-0001)
+  invoice: ObjectId;
+  client: ObjectId;
   amount: number;
   paymentMethod: 'mpesa' | 'paystack';
   status: 'pending' | 'completed' | 'failed';
@@ -285,13 +236,8 @@ interface IPayment {
   notes?: string;
   metadata?: Record<string, any>;
   processorRefs?: {
-    daraja?: {
-      merchantRequestId?: string;
-      checkoutRequestId?: string;
-    };
-    paystack?: {
-      reference?: string;
-    };
+    daraja?: { merchantRequestId?: string; checkoutRequestId?: string };
+    paystack?: { reference?: string };
   };
   rawPayload?: any;
   createdAt: Date;
@@ -299,21 +245,8 @@ interface IPayment {
 }
 ```
 
-**Fields:**
-- `paymentNumber` - Unique identifier (auto-generated)
-- `invoice` - Invoice reference
-- `client` - Client reference
-- `amount` - Payment amount (min: 0)
-- `paymentMethod` - Payment channel (mpesa or paystack)
-- `status` - Payment status (pending, completed, or failed)
-- `transactionId` - Gateway transaction ID (optional)
-- `reference` - Payment reference (optional)
-- `paymentDate` - When payment was made (default: Date.now)
-- `notes` - Additional information (optional, max 500 characters)
-- `metadata` - Extra payment data (optional)
-- `processorRefs` - Processor-specific references (daraja or paystack)
-- `rawPayload` - Raw webhook payload (optional)
-- Timestamps
+**Notes:**
+- `paymentNumber` is generated automatically (pre-validate).
 
 ---
 
@@ -321,16 +254,16 @@ interface IPayment {
 ```typescript
 interface IProject {
   _id: ObjectId;
-  projectNumber: string; // Auto-generated (PRJ-2025-0001)
+  projectNumber: string; // Auto-generated (PRJ-YYYY-0001)
   title: string;
   description: string;
-  client: ObjectId; // Reference to User
-  quotation?: ObjectId; // Reference to Quotation
-  invoice?: ObjectId; // Reference to Invoice
-  services: ObjectId[]; // References to Services
+  client: ObjectId;
+  quotation?: ObjectId;
+  invoice?: ObjectId;
+  services: ObjectId[];
   status: 'pending' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
   priority: 'low' | 'medium' | 'high' | 'urgent';
-  assignedTo: ObjectId[]; // References to User (team members)
+  assignedTo: ObjectId[];
   startDate?: Date;
   endDate?: Date;
   completionDate?: Date;
@@ -349,28 +282,15 @@ interface IProject {
     uploadedAt: Date;
   }>;
   notes?: string;
-  createdBy: ObjectId; // Reference to User
+  createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**Fields:**
-- `projectNumber` - Unique identifier
-- `title`, `description` - Project details
-- `client` - Reference to User (with client role)
-- `quotation`, `invoice` - Related documents
-- `services` - Services included
-- `status` - Project lifecycle status
-- `priority` - Urgency level
-- `assignedTo` - Team members assigned
-- `startDate`, `endDate`, `completionDate` - Timeline
-- `progress` - Completion percentage
-- `milestones` - Project milestones
-- `attachments` - Project files
-- `notes` - Additional information
-- `createdBy` - Admin who created it
-- Timestamps
+**Notes:**
+- `projectNumber` is generated on save if missing.
+- `completionDate` is set when status changes to `completed`.
 
 ---
 
@@ -378,29 +298,18 @@ interface IProject {
 ```typescript
 interface ITestimonial {
   _id: ObjectId;
-  client: ObjectId; // Reference to User
-  project?: ObjectId; // Reference to Project
+  client: ObjectId;
+  project?: ObjectId;
   rating: number; // 1-5
   message: string;
   isApproved: boolean;
   isPublished: boolean;
-  approvedBy?: ObjectId; // Reference to User
+  approvedBy?: ObjectId;
   approvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
-
-**Fields:**
-- `client` - User (with client role) who gave testimonial
-- `project` - Related project (optional)
-- `rating` - Star rating (1-5)
-- `message` - Testimonial text
-- `isApproved` - Admin approval status
-- `isPublished` - Public visibility
-- `approvedBy` - Admin who approved
-- `approvedAt` - Approval timestamp
-- Timestamps
 
 ---
 
@@ -408,7 +317,7 @@ interface ITestimonial {
 ```typescript
 interface INotification {
   _id: ObjectId;
-  recipient: ObjectId; // Reference to User
+  recipient: ObjectId;
   recipientModel: 'User';
   type: 'email' | 'sms' | 'push' | 'in_app';
   category: 'invoice' | 'payment' | 'project' | 'quotation' | 'general';
@@ -418,29 +327,32 @@ interface INotification {
   sentAt?: Date;
   readAt?: Date;
   metadata?: Record<string, any>;
-  actions?: NotificationAction[];
-  context?: NotificationContext;
+  actions?: Array<{
+    id: string;
+    label: string;
+    type: 'api' | 'navigate' | 'modal' | 'confirm';
+    endpoint?: string;
+    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    payload?: any;
+    route?: string;
+    modal?: string;
+    variant?: 'primary' | 'secondary' | 'danger' | 'success';
+    requiresConfirmation?: boolean;
+    confirmationMessage?: string;
+  }>;
+  context?: {
+    resourceId?: string;
+    resourceType?: string;
+    additionalData?: any;
+  };
   expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 ```
 
-**Fields:**
-- `recipient` - Who receives the notification (reference to User)
-- `recipientModel` - Always 'User' (unified user system)
-- `type` - Notification channel (email, sms, push, in_app)
-- `category` - Notification category (invoice, payment, project, quotation, general)
-- `subject` - Notification subject (max 200 characters)
-- `message` - Notification content
-- `status` - Delivery status (pending, sent, failed, default: pending)
-- `sentAt` - When sent (optional)
-- `readAt` - When read (optional)
-- `metadata` - Additional data (optional)
-- `actions` - Action buttons for notifications (optional)
-- `context` - Resource context (resourceId, resourceType, additionalData)
-- `expiresAt` - Expiration date (optional)
-- Timestamps
+**Notes:**
+- `isUnread` is a virtual (true when `readAt` is empty).
 
 ---
 
@@ -454,7 +366,7 @@ interface IContactMessage {
   subject: string;
   message: string;
   status: 'unread' | 'read' | 'replied' | 'archived';
-  repliedBy?: ObjectId; // Reference to User
+  repliedBy?: ObjectId;
   repliedAt?: Date;
   reply?: string;
   createdAt: Date;
@@ -462,14 +374,9 @@ interface IContactMessage {
 }
 ```
 
-**Fields:**
-- `name`, `email`, `phone` - Sender details
-- `subject`, `message` - Message content
-- `status` - Message status
-- `repliedBy` - Admin who replied
-- `repliedAt` - Reply timestamp
-- `reply` - Reply message
-- Timestamps
+**Notes:**
+- `message` max length: 2000 characters.
+- `reply` max length: 2000 characters.
 
 ---
 
@@ -478,17 +385,17 @@ interface IContactMessage {
 ### 1. Auth Controllers
 
 #### `authController.ts`
-- `register()` - Admin registration with OTP verification
+- `register()` - Public registration with OTP verification (defaults to client role unless `role` is provided)
 - `verifyOTP()` - Verify OTP and activate account
 - `resendOTP()` - Resend OTP for verification
-- `login()` - Admin login (email/phone + password)
+- `login()` - User login (email/phone + password)
 - `logout()` - Logout user
-- `forgotPassword()` - Send password reset email
+- `forgotPassword()` - Send password reset via email/SMS
 - `resetPassword()` - Reset password with token
 - `refreshToken()` - Refresh JWT token
 - `getMe()` - Get current user profile
 
-**Note:** All user registration (including clients) is handled through the unified `register()` function in `authController.ts`. New users are automatically assigned the 'client' role by default.
+**Note:** Registration requires the `client` role to exist (see `npm run migrate:roles`).
 
 ---
 
@@ -524,15 +431,15 @@ interface IContactMessage {
 #### `quotationController.ts`
 - `createQuotation()` - Create quotation (admin or client request)
 - `getAllQuotations()` - Get all quotations (admin)
+- `getQuotationsByClient()` - Get quotations for a client
 - `getQuotation()` - Get single quotation
 - `updateQuotation()` - Update quotation (admin)
 - `deleteQuotation()` - Delete quotation (admin)
 - `acceptQuotation()` - Client accepts quotation
 - `rejectQuotation()` - Client rejects quotation
 - `convertToInvoice()` - Convert quotation to invoice
-- `generateQuotationPDF()` - Generate PDF
+- `generateQuotationPDFController()` - Generate PDF
 - `sendQuotation()` - Email quotation to client
-- `getClientQuotations()` - Get client's quotations
 
 ---
 
@@ -541,6 +448,9 @@ interface IContactMessage {
 #### `invoiceController.ts`
 - `createInvoice()` - Create invoice (admin)
 - `getAllInvoices()` - Get all invoices (admin)
+- `getInvoiceStats()` - Invoice statistics (admin)
+- `getOverdueInvoices()` - Overdue invoices (admin)
+- `getClientInvoices()` - Client invoices
 - `getInvoice()` - Get single invoice
 - `updateInvoice()` - Update invoice (admin)
 - `deleteInvoice()` - Delete invoice (admin)
@@ -597,6 +507,7 @@ interface IContactMessage {
 - `createTestimonial()` - Client submits testimonial
 - `getAllTestimonials()` - Get all testimonials (admin)
 - `getPublishedTestimonials()` - Get public testimonials
+- `getMyTestimonials()` - Get authenticated client's testimonials
 - `getTestimonial()` - Get single testimonial
 - `updateTestimonial()` - Update testimonial
 - `deleteTestimonial()` - Delete testimonial
@@ -629,6 +540,7 @@ interface IContactMessage {
 
 #### `contactController.ts`
 - `submitContactMessage()` - Submit contact form
+- `getMyMessages()` - Get client's own contact messages
 - `getAllMessages()` - Get all messages (admin)
 - `getMessage()` - Get single message
 - `markAsRead()` - Mark as read
@@ -666,6 +578,9 @@ interface IContactMessage {
 - `getUserRoles()` - Get user roles (admin)
 - `deleteUser()` - Delete user (super admin)
 - `adminCreateCustomer()` - Admin creates a customer
+- `assignRole()` - Assign role to user (super admin)
+- `removeRole()` - Remove role from user (super admin)
+- `getClients()` - Get users with client role
 
 ---
 
@@ -675,10 +590,10 @@ interface IContactMessage {
 **Base:** `/api/auth`
 
 ```typescript
-POST   /register                  // Admin registration with OTP
+POST   /register                  // Registration with OTP
 POST   /verify-otp                // Verify OTP and activate account
 POST   /resend-otp                // Resend OTP for verification
-POST   /login                     // Admin login (email/phone + password)
+POST   /login                     // User login (email/phone + password)
 POST   /logout                    // Logout user
 POST   /forgot-password           // Forgot password
 POST   /reset-password/:token     // Reset password
@@ -686,7 +601,7 @@ POST   /refresh-token             // Refresh token
 GET    /me                        // Get current user profile
 ```
 
-**Note:** All user registration (including clients) is handled through `/api/auth/register`. New users are automatically assigned the 'client' role by default.
+**Note:** New users are assigned the `client` role by default unless a valid `role` is provided.
 
 ---
 
@@ -696,11 +611,11 @@ GET    /me                        // Get current user profile
 ```typescript
 POST   /                          // Create role (super admin only)
 GET    /                          // Get all roles
-GET    /:id                       // Get single role
-PUT    /:id                       // Update role (super admin only)
-DELETE /:id                       // Delete role (super admin only)
-GET    /:id/users                 // Get users with specific role
-GET    /clients                   // Get all users with 'client' role
+GET    /:roleId                   // Get single role
+PUT    /:roleId                   // Update role (super admin only)
+DELETE /:roleId                   // Delete role (super admin only)
+GET    /:roleId/users             // Get users with specific role
+GET    /client/users              // Get all users with 'client' role
 ```
 
 ---
@@ -712,11 +627,11 @@ GET    /clients                   // Get all users with 'client' role
 GET    /active                    // Get active services (public)
 POST   /                          // Create service (admin)
 GET    /                          // Get all services (admin)
-GET    /:id                       // Get single service (public)
-PUT    /:id                       // Update service (admin)
-DELETE /:id                       // Delete service (admin)
-PATCH  /:id/toggle-status         // Toggle service status (admin)
-POST   /:id/icon                  // Upload service icon (admin)
+GET    /:serviceId                // Get single service (public)
+PUT    /:serviceId                // Update service (admin)
+DELETE /:serviceId                // Delete service (super admin only)
+PATCH  /:serviceId/toggle-status  // Toggle service status (admin)
+POST   /:serviceId/icon           // Upload service icon (admin)
 ```
 
 ---
@@ -727,14 +642,15 @@ POST   /:id/icon                  // Upload service icon (admin)
 ```typescript
 POST   /                          // Create quotation (admin)
 GET    /                          // Get all quotations (admin)
+GET    /client/:clientId          // Get quotations for a client
+POST   /:quotationId/accept       // Accept quotation (client)
+POST   /:quotationId/reject       // Reject quotation (client)
+POST   /:quotationId/send         // Send quotation via email (admin)
+GET    /:quotationId/pdf          // Generate PDF
+POST   /:quotationId/convert-to-invoice  // Convert to invoice (admin)
 GET    /:quotationId              // Get single quotation
 PUT    /:quotationId              // Update quotation (admin)
 DELETE /:quotationId              // Delete quotation (admin)
-POST   /:quotationId/accept       // Accept quotation (client)
-POST   /:quotationId/reject       // Reject quotation (client)
-POST   /:quotationId/convert-to-invoice  // Convert to invoice (admin)
-GET    /:quotationId/pdf          // Generate PDF
-POST   /:quotationId/send         // Send quotation via email (admin)
 ```
 
 ---
@@ -745,13 +661,16 @@ POST   /:quotationId/send         // Send quotation via email (admin)
 ```typescript
 POST   /                          // Create invoice (admin)
 GET    /                          // Get all invoices (admin)
+GET    /stats                     // Invoice statistics (admin)
+GET    /overdue                   // Overdue invoices (admin)
+GET    /client/:clientId          // Get client invoices
 GET    /:invoiceId                // Get single invoice
 PUT    /:invoiceId                // Update invoice (admin)
 DELETE /:invoiceId                // Delete invoice (admin)
 PATCH  /:invoiceId/mark-paid      // Mark as paid (admin)
 PATCH  /:invoiceId/mark-overdue   // Mark as overdue (admin)
 PATCH  /:invoiceId/cancel         // Cancel invoice (admin)
-GET    /:invoiceId/pdf             // Generate PDF
+GET    /:invoiceId/pdf            // Generate PDF
 POST   /:invoiceId/send           // Send invoice via email (admin)
 ```
 
@@ -792,7 +711,7 @@ POST   /:projectId/assign         // Assign team members (admin)
 PATCH  /:projectId/status         // Update status
 PATCH  /:projectId/progress       // Update progress
 POST   /:projectId/milestones     // Add milestone
-PATCH  /:projectId/milestones/:milestoneId  // Update milestone
+PUT    /:projectId/milestones/:milestoneId  // Update milestone
 DELETE /:projectId/milestones/:milestoneId  // Delete milestone
 POST   /:projectId/attachments    // Upload attachments (multiple files supported, max 10)
 DELETE /:projectId/attachments/:attachmentId  // Delete attachment
@@ -805,14 +724,15 @@ DELETE /:projectId/attachments/:attachmentId  // Delete attachment
 
 ```typescript
 POST   /                          // Create testimonial (client)
-GET    /                          // Get all testimonials (admin)
 GET    /published                 // Get published testimonials
-GET    /:id                       // Get single testimonial
-PUT    /:id                       // Update testimonial
-DELETE /:id                       // Delete testimonial
+GET    /my                        // Get authenticated client's testimonials
+GET    /                          // Get all testimonials (admin)
 POST   /:id/approve               // Approve testimonial (admin)
 POST   /:id/publish               // Publish testimonial (admin)
 POST   /:id/unpublish             // Unpublish testimonial (admin)
+GET    /:id                       // Get single testimonial
+PUT    /:id                       // Update testimonial
+DELETE /:id                       // Delete testimonial
 ```
 
 ---
@@ -843,12 +763,13 @@ GET    /category/:category        // Get notifications by category
 
 ```typescript
 POST   /                          // Submit contact message
+GET    /my-messages               // Get client messages
 GET    /                          // Get all messages (admin)
-GET    /:id                       // Get single message
-PATCH  /:id/read                  // Mark as read
-POST   /:id/reply                 // Reply to message
-DELETE /:id                       // Delete message
-PATCH  /:id/archive               // Archive message
+GET    /:messageId                // Get single message
+PATCH  /:messageId/read           // Mark as read
+POST   /:messageId/reply          // Reply to message
+DELETE /:messageId                // Delete message
+PATCH  /:messageId/archive        // Archive message
 ```
 
 ---
@@ -876,7 +797,8 @@ PUT    /profile                   // Update own profile
 PUT    /change-password           // Change password
 GET    /notifications             // Get notification preferences
 PUT    /notifications             // Update notification preferences
-POST   /admin-create              // Create admin user (super admin)
+POST   /admin-create              // Admin create customer
+GET    /clients                   // Get users with client role
 GET    /                          // Get all users (admin)
 GET    /:userId                   // Get single user (admin)
 PUT    /:userId                   // Update user (admin)
@@ -884,9 +806,19 @@ PUT    /:userId/status            // Update user status (super admin)
 PUT    /:userId/admin             // Set user as admin (super admin)
 GET    /:userId/roles             // Get user roles (admin)
 DELETE /:userId                   // Delete user (super admin)
+POST   /:userId/roles             // Assign role to user (super admin)
+DELETE /:userId/roles/:roleId     // Remove role from user (super admin)
 ```
 
 ---
+
+### Utility Routes
+```typescript
+GET    /api                        // API root info
+GET    /api/health                 // Health check
+GET    /api/debug/cors             // CORS debug info
+GET    /api/docs                   // Swagger UI
+```
 
 ## 🏗️ Architecture Overview
 
@@ -895,10 +827,8 @@ DELETE /:userId                   // Delete user (super admin)
 sire-api/
 ├── src/
 │   ├── config/
-│   │   ├── database.ts          # MongoDB connection
 │   │   ├── cloudinary.ts        # File upload config
 │   │   ├── swagger.ts          # Swagger documentation config
-│   │   └── payment.ts           # Payment gateway config
 │   │   
 │   ├── models/
 │   │   ├── User.ts
@@ -939,9 +869,11 @@ sire-api/
 │   │   └── userRoutes.ts
 │   ├── middleware/
 │   │   ├── auth.ts              # JWT authentication and authorization
-│   │   ├── errorHandler.ts     # Error handling
-│   │   ├── authorize.ts         # (Empty - not used)
-│   │   └── validate.ts          # (Empty - not used)
+│   │   ├── errorHandler.ts     # Error handling helpers
+│   │   ├── authorize.ts         # Placeholder (unused)
+│   │   └── validate.ts          # Placeholder (unused)
+│   ├── scripts/
+│   │   └── migrateToRoles.ts    # Seed system roles
 │   ├── services/
 │   │   ├── internal/
 │   │   │   ├── notificationService.ts # Internal notifications
@@ -953,10 +885,11 @@ sire-api/
 │   │       └── smsService.ts          # SMS service (Africa's Talking)
 │   ├── utils/
 │   │   ├── generatePDF.ts       # PDF generation utilities (PDFKit)
-│   │   ├── index.ts             # JWT utilities and OTP generation
-│   │   └── notificationHelper.ts # In-app notification helper 
+│   │   ├── pdfUpload.ts         # PDF generation + Cloudinary upload
+│   │   ├── notificationHelper.ts # In-app notification helper
+│   │   └── index.ts             # JWT utilities and OTP generation
 │   ├── types/
-│   │   ├── express.d.ts         # Express type extensions
+│   │   ├── africastalking.d.ts  # Africa's Talking types
 │   │   └── index.ts             # Custom types
 │   └── index.ts                 # App entry point
 ├── doc/                         # Documentation
@@ -972,7 +905,6 @@ sire-api/
 
 #### Authentication Middleware
 - `authenticateToken` - Verify JWT token and load user
-- `authenticateClientToken` - Verify JWT token for both User and Client
 - `authorizeRoles(allowedRoles)` - Role-based access control
 - `requireAdmin` - Super admin access only
 - `requireOwnershipOrAdmin` - User owns resource OR is admin
@@ -980,12 +912,19 @@ sire-api/
 - `optionalAuth` - Optional authentication (doesn't fail if no token)
 
 #### Error Handling
-- `errorHandler` - Global error handler
+- `errorHandler` - Error helper used across controllers
+- Global error handler is defined in `src/index.ts`
 
 #### File Upload
 - File upload is handled via `config/cloudinary.ts` with Cloudinary integration
-- **Project Attachments:** Supports multiple file uploads (max 10 files per request, 10MB per file)
-- Supported file types: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
+- **User Avatars:** 2MB limit
+- **Service Icons:** 1MB limit
+- **Project Attachments:** Multiple files (max 10 per request, 10MB per file)
+- Supported formats: Images (jpg, jpeg, png, gif, webp) and Documents (pdf, doc, docx, txt)
+
+#### Real-time (Socket.io)
+- Socket server is initialized in `src/index.ts`
+- Clients can subscribe to `project`, `payment`, `invoice`, and `quotation` updates
 
 ---
 
@@ -994,39 +933,41 @@ sire-api/
 ```env
 # Server
 NODE_ENV=development
-PORT=5000
+PORT=4000
+API_BASE_URL=https://yourdomain.com
+CORS_ORIGIN=http://localhost:3000
 
 # Database
 MONGO_URI=mongodb://localhost:27017/sire-tech
 
 # JWT
 JWT_SECRET=your_jwt_secret
-JWT_EXPIRE=30d
-JWT_COOKIE_EXPIRE=30
+JWT_EXPIRES_IN=1d
+JWT_REFRESH_SECRET=your_refresh_secret
+
+# OTP
+OTP_EXP_MINUTES=10
 
 # Email
 SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_password
+SMTP_PASS=your_password
 FROM_EMAIL=noreply@siretech.com
-FROM_NAME=Sire Tech
 
 # SMS
 AFRICAS_TALKING_API_KEY=your_api_key
 AFRICAS_TALKING_USERNAME=your_username
 
 # M-Pesa (Daraja API)
+MPESA_ENV=sandbox
 MPESA_CONSUMER_KEY=your_consumer_key
 MPESA_CONSUMER_SECRET=your_consumer_secret
-MPESA_SHORTCODE=your_shortcode
+MPESA_SHORT_CODE=your_shortcode
 MPESA_PASSKEY=your_passkey
-MPESA_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/mpesa
 
 # Paystack
 PAYSTACK_SECRET_KEY=your_paystack_secret_key
-PAYSTACK_PUBLIC_KEY=your_paystack_public_key
-PAYSTACK_CALLBACK_URL=https://yourdomain.com/api/payments/webhooks/paystack
+PAYSTACK_CURRENCY=KES
 
 # Cloudinary (File Upload)
 CLOUDINARY_CLOUD_NAME=your_cloud_name
@@ -1034,6 +975,7 @@ CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
 
 # Frontend URL
+FRONTEND_URL=http://localhost:3000
 CLIENT_URL=http://localhost:3000
 ```
 
@@ -1044,26 +986,17 @@ CLIENT_URL=http://localhost:3000
 1. **Authentication**
    - JWT-based authentication
    - Password hashing with bcryptjs
-   - Email verification
-   - Password reset functionality
+   - OTP email verification
+   - Password reset via email/SMS
 
 2. **Authorization**
    - Role-based access control (RBAC)
    - Route-level permissions
    - Resource ownership validation
 
-3. **Data Protection**
-   - Helmet.js for security headers
-   - CORS configuration
-   - Rate limiting
-   - Input validation and sanitization
-   - MongoDB injection prevention
-
-4. **API Security**
-   - Request validation
-   - Error message sanitization
-   - Secure cookie handling
-   - HTTPS enforcement in production
+3. **API Security**
+   - CORS allowlist
+   - Error responses include stack traces only in development
 
 ---
 
@@ -1081,279 +1014,18 @@ CLIENT_URL=http://localhost:3000
    - Cloudinary (Images/Documents)
 
 4. **PDF Generation**
-   - PDFKit (Invoices/Quotations with table support)
-   - **Recommended for Tables:** PDFKit with custom table utilities
-   - **Alternative:** Puppeteer for HTML-to-PDF with complex layouts
+   - PDFKit in `utils/generatePDF.ts`
+   - Cloudinary upload in `utils/pdfUpload.ts`
 
-5. **Future Integrations**
-   - Stripe (Cards - future)
-   - PayPal (future)
-   - QuickBooks (Accounting - future)
-   - AI API (Quotation Generation - future)
+5. **Real-time**
+   - Socket.io for live updates and notifications
 
 ---
 
-## 📄 PDF Generation with Table Support
+## 📄 PDF Generation
 
-### Recommended PDF Libraries for Tables
-
-Based on your requirements for table support in PDFs, here are the best options:
-
-#### 1. **PDFKit (Recommended)**
-- **Version:** `^0.17.1` (as specified in your dependencies)
-- **Table Support:** Excellent with custom table utilities
-- **Pros:** 
-  - Native table support with proper formatting
-  - Lightweight and fast
-  - Full control over table styling
-  - Works well for invoices, quotations, and reports
-- **Cons:** Requires manual table layout code
-
-#### 2. **Puppeteer (Alternative for Complex Layouts)**
-- **Table Support:** Excellent (renders HTML tables perfectly)
-- **Pros:**
-  - Perfect HTML table rendering
-  - CSS styling support
-  - Handles complex layouts automatically
-- **Cons:** Heavier resource usage, requires headless browser
-
-#### 3. **pdfmake (JSON-based)**
-- **Table Support:** Good with declarative syntax
-- **Pros:** Easy to use, JSON-based table definitions
-- **Cons:** Limited styling options compared to PDFKit
-
-### PDFKit Table Implementation Example
-
-```typescript
-// utils/generatePDF.ts
-import PDFDocument from 'pdfkit';
-import { StreamBuffers } from 'stream-buffers';
-
-export const generateInvoicePDF = (invoiceData: any) => {
-  const doc = new PDFDocument({ margin: 50 });
-  const stream = new StreamBuffers();
-  
-  doc.pipe(stream);
-  
-  // Header
-  doc.fontSize(20).text('INVOICE', 50, 50);
-  doc.fontSize(12).text(`Invoice #: ${invoiceData.invoiceNumber}`, 50, 80);
-  
-  // Table headers
-  const tableTop = 150;
-  const itemCodeX = 50;
-  const descriptionX = 100;
-  const quantityX = 350;
-  const priceX = 400;
-  const totalX = 500;
-  
-  // Table header
-  doc.fontSize(10)
-     .text('Item', itemCodeX, tableTop)
-     .text('Description', descriptionX, tableTop)
-     .text('Qty', quantityX, tableTop)
-     .text('Price', priceX, tableTop)
-     .text('Total', totalX, tableTop);
-  
-  // Table rows
-  let currentY = tableTop + 20;
-  invoiceData.items.forEach((item: any) => {
-    doc.fontSize(9)
-       .text(item.code, itemCodeX, currentY)
-       .text(item.description, descriptionX, currentY)
-       .text(item.quantity.toString(), quantityX, currentY)
-       .text(`$${item.price.toFixed(2)}`, priceX, currentY)
-       .text(`$${item.total.toFixed(2)}`, totalX, currentY);
-    
-    currentY += 20;
-  });
-  
-  // Totals
-  const totalsY = currentY + 20;
-  doc.fontSize(10)
-     .text(`Subtotal: $${invoiceData.subtotal.toFixed(2)}`, 400, totalsY)
-     .text(`Tax: $${invoiceData.tax.toFixed(2)}`, 400, totalsY + 20)
-     .text(`Total: $${invoiceData.totalAmount.toFixed(2)}`, 400, totalsY + 40);
-  
-  doc.end();
-  
-  return new Promise((resolve) => {
-    stream.on('finish', () => {
-      resolve(stream.getContents());
-    });
-  });
-};
-```
-
-### Advanced Table Utilities for PDFKit
-
-```typescript
-// utils/tableUtils.ts
-export class PDFTable {
-  private doc: PDFDocument;
-  private startX: number;
-  private startY: number;
-  private tableWidth: number;
-  private columnWidths: number[];
-  
-  constructor(doc: PDFDocument, startX: number, startY: number, tableWidth: number, columnWidths: number[]) {
-    this.doc = doc;
-    this.startX = startX;
-    this.startY = startY;
-    this.tableWidth = tableWidth;
-    this.columnWidths = columnWidths;
-  }
-  
-  drawTable(headers: string[], rows: string[][], options: any = {}) {
-    const { cellPadding = 5, fontSize = 10, headerFontSize = 12 } = options;
-    let currentY = this.startY;
-    
-    // Draw headers
-    this.doc.fontSize(headerFontSize).fillColor('#333');
-    let currentX = this.startX;
-    headers.forEach((header, index) => {
-      this.doc.text(header, currentX + cellPadding, currentY + cellPadding);
-      currentX += this.columnWidths[index];
-    });
-    
-    // Draw header underline
-    this.doc.moveTo(this.startX, currentY + 25)
-           .lineTo(this.startX + this.tableWidth, currentY + 25)
-           .stroke();
-    
-    currentY += 30;
-    
-    // Draw rows
-    this.doc.fontSize(fontSize).fillColor('#000');
-    rows.forEach((row, rowIndex) => {
-      currentX = this.startX;
-      row.forEach((cell, cellIndex) => {
-        this.doc.text(cell, currentX + cellPadding, currentY + cellPadding);
-        currentX += this.columnWidths[cellIndex];
-      });
-      
-      // Draw row separator
-      if (rowIndex < rows.length - 1) {
-        this.doc.moveTo(this.startX, currentY + 20)
-               .lineTo(this.startX + this.tableWidth, currentY + 20)
-               .stroke();
-      }
-      
-      currentY += 25;
-    });
-    
-    return currentY;
-  }
-}
-```
-
-### Puppeteer Alternative (for HTML Tables)
-
-```typescript
-// utils/puppeteerPDF.ts
-import puppeteer from 'puppeteer';
-
-export const generateHTMLToPDF = async (htmlContent: string) => {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  
-  const page = await browser.newPage();
-  await page.setContent(htmlContent);
-  
-  const pdf = await page.pdf({
-    format: 'A4',
-    printBackground: true,
-    margin: {
-      top: '1cm',
-      right: '1cm',
-      bottom: '1cm',
-      left: '1cm'
-    }
-  });
-  
-  await browser.close();
-  return pdf;
-};
-```
-
-### HTML Table Template for Puppeteer
-
-```html
-<!-- templates/invoice.html -->
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .invoice-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    .invoice-table th, .invoice-table td { 
-      border: 1px solid #ddd; 
-      padding: 8px; 
-      text-align: left; 
-    }
-    .invoice-table th { background-color: #f2f2f2; }
-    .totals { text-align: right; margin-top: 20px; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>INVOICE</h1>
-    <p>Invoice #: {{invoiceNumber}}</p>
-  </div>
-  
-  <table class="invoice-table">
-    <thead>
-      <tr>
-        <th>Item</th>
-        <th>Description</th>
-        <th>Quantity</th>
-        <th>Price</th>
-        <th>Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{#each items}}
-      <tr>
-        <td>{{code}}</td>
-        <td>{{description}}</td>
-        <td>{{quantity}}</td>
-        <td>${{price}}</td>
-        <td>${{total}}</td>
-      </tr>
-      {{/each}}
-    </tbody>
-  </table>
-  
-  <div class="totals">
-    <p>Subtotal: ${{subtotal}}</p>
-    <p>Tax: ${{tax}}</p>
-    <p><strong>Total: ${{totalAmount}}</strong></p>
-  </div>
-</body>
-</html>
-```
-
-### Package Recommendations for Table Support
-
-```json
-{
-  "pdfkit": "^0.17.1",           // Primary PDF generation
-  "stream-buffers": "^3.0.3",    // For PDFKit streaming
-  "puppeteer": "^21.0.0",        // Alternative for HTML-to-PDF
-  "handlebars": "^4.7.8"         // For HTML templating (if using Puppeteer)
-}
-```
-
-### Why PDFKit is Recommended for Your Use Case
-
-1. **Native Table Support:** PDFKit has excellent built-in support for creating tables
-2. **Performance:** Lightweight and fast compared to headless browsers
-3. **Control:** Full control over table styling, borders, and formatting
-4. **Server-Friendly:** No browser dependencies, works well in serverless environments
-5. **Invoice/Quotation Ready:** Perfect for business documents with itemized tables
+- PDF rendering is handled by `utils/generatePDF.ts` using PDFKit.
+- PDFs are uploaded to Cloudinary with `utils/pdfUpload.ts` and stored in `Quotation.pdfUrl` or `Invoice.pdf.url`.
 
 ---
 
@@ -1363,6 +1035,11 @@ export const generateHTMLToPDF = async (htmlContent: string) => {
 ```bash
 cd sire-api
 npm install
+```
+
+### Seed Default Roles
+```bash
+npm run migrate:roles
 ```
 
 ### Database Setup
@@ -1418,7 +1095,7 @@ npm start
 
 ---
 
-**Last Updated:** January 2025
-**Version:** 1.0.0
+**Last Updated:** January 2026
+**Version:** 0.1.0
 
-**Note:** This documentation has been updated to match the actual implementation in the codebase.
+**Note:** This documentation reflects the current codebase implementation.
