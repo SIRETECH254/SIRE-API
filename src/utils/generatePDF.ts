@@ -1,6 +1,8 @@
 import PDFDocument from 'pdfkit';
 import { WritableStreamBuffer } from 'stream-buffers';
 
+type PDFKitDocument = InstanceType<typeof PDFDocument>;
+
 const THEME_COLOR = '#7b1c1c';
 const TEXT_COLOR = '#222222';
 const MUTED_COLOR = '#666666';
@@ -18,7 +20,7 @@ const formatDate = (value?: any): string => {
     return new Date(value).toLocaleDateString();
 };
 
-const drawSectionTitle = (doc: PDFDocument, text: string, x: number, y: number, width: number): number => {
+const drawSectionTitle = (doc: PDFKitDocument, text: string, x: number, y: number, width: number): number => {
     doc.font('Helvetica-Bold')
         .fontSize(10)
         .fillColor(THEME_COLOR)
@@ -26,7 +28,7 @@ const drawSectionTitle = (doc: PDFDocument, text: string, x: number, y: number, 
     return y + 14;
 };
 
-const drawLines = (doc: PDFDocument, lines: string[], x: number, y: number, width: number): number => {
+const drawLines = (doc: PDFKitDocument, lines: string[], x: number, y: number, width: number): number => {
     let currentY = y;
     lines.filter(Boolean).forEach((line) => {
         doc.font('Helvetica')
@@ -39,7 +41,7 @@ const drawLines = (doc: PDFDocument, lines: string[], x: number, y: number, widt
 };
 
 const drawKeyValueRows = (
-    doc: PDFDocument,
+    doc: PDFKitDocument,
     rows: Array<{ label: string; value: string }>,
     x: number,
     y: number,
@@ -65,7 +67,7 @@ const drawKeyValueRows = (
 };
 
 const drawItemsTable = (
-    doc: PDFDocument,
+    doc: PDFKitDocument,
     items: any[],
     startY: number,
     contentX: number,
@@ -133,7 +135,7 @@ const drawItemsTable = (
 };
 
 const drawTotals = (
-    doc: PDFDocument,
+    doc: PDFKitDocument,
     startY: number,
     contentX: number,
     contentWidth: number,
@@ -194,7 +196,7 @@ const drawTotals = (
 };
 
 const renderDocument = (
-    doc: PDFDocument,
+    doc: PDFKitDocument,
     options: {
         title: 'QUOTATION' | 'INVOICE';
         numberLabel: string;
@@ -282,8 +284,8 @@ const renderDocument = (
 
     const totalsEndY = drawTotals(doc, tableEndY + 14, margin, contentWidth, {
         subtotal: options.subtotal,
-        tax: options.tax,
-        discount: options.discount,
+        tax: Number(options.tax || 0),
+        discount: Number(options.discount || 0),
         total: options.total
     });
 
