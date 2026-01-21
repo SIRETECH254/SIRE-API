@@ -11,7 +11,7 @@ const BORDER_COLOR = '#d9d9d9';
 
 const formatMoney = (value: number, forceNegative: boolean = false): string => {
     const amount = Number(value || 0);
-    const formatted = `$${Math.abs(amount).toFixed(2)}`;
+    const formatted = `KES ${Math.abs(amount).toFixed(2)}`;
     return forceNegative || amount < 0 ? `-${formatted}` : formatted;
 };
 
