@@ -242,7 +242,7 @@ export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: 
         const totalAmount = quotation.totalAmount || 0;
 
         const mailOptions: any = {
-            from: `SIRE Tech <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
             to: email,
             subject: `Quotation ${quotationNumber} - SIRE Tech`,
             html: `
