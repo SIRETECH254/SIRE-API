@@ -19,6 +19,12 @@ const projectSchema = new Schema<IProject>({
     required: [true, 'Project description is required'],
     trim: true
   },
+  link: {
+    type: String,
+    trim: true,
+    default: null,
+    match: [/^https?:\/\/.+/i, 'Project link must be a valid URL starting with http:// or https://']
+  },
   client: {
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -172,4 +178,3 @@ projectSchema.pre('save', function(next) {
 const Project = mongoose.model<IProject>('Project', projectSchema);
 
 export default Project;
-

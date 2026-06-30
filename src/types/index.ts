@@ -233,6 +233,7 @@ export interface IProject extends Document {
   projectNumber: string;
   title: string;
   description: string;
+  link?: string | null;
   client: Types.ObjectId; // Reference to User
   quotation?: Types.ObjectId; // Reference to Quotation
   invoice?: Types.ObjectId; // Reference to Invoice

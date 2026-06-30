@@ -13,9 +13,10 @@ import { createInAppNotification } from '../utils/notificationHelper';
 // @access  Private (Admin, Project Manager)
 export const createProject = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const { title, description, client, services, priority, assignedTo, startDate, endDate, notes }: {
+        const { title, description, link, client, services, priority, assignedTo, startDate, endDate, notes }: {
             title: string;
             description: string;
+            link?: string | null;
             client: string;
             services?: string[];
             priority?: 'low' | 'medium' | 'high' | 'urgent';
@@ -26,9 +27,18 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         } = req.body;
 
         // Validation
-        if (!title || !description || !client) {
-            return next(errorHandler(400, "Title, description, and client are required"));
+        if (!title ) {
+            return next(errorHandler(400, "Title is required"));
         }
+
+        if (!description) {
+            return next(errorHandler(400, " description is required"));
+        }
+
+        if (!client) {
+            return next(errorHandler(400, "client is required"));
+        }
+        
 
         // Validate createdBy exists
         if (!req.user?._id) {
@@ -81,6 +91,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
         const project = new Project({
             title,
             description,
+            link,
             client,
             services: services || [],
             priority: priority || 'medium',
@@ -184,7 +195,7 @@ export const createProject = async (req: Request, res: Response, next: NextFunct
 
 // @desc    Get all projects
 // @route   GET /api/projects
-// @access  Private (Admin)
+// @access  Public
 export const getAllProjects = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { page = 1, limit = 10, search, status, priority, client } = req.query;
@@ -288,9 +299,10 @@ export const getProject = async (req: Request, res: Response, next: NextFunction
 export const updateProject = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const { projectId } = req.params;
-        const { title, description, status, priority, startDate, endDate, notes }: {
+        const { title, description, link, status, priority, startDate, endDate, notes }: {
             title?: string;
             description?: string;
+            link?: string | null;
             status?: 'pending' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
             priority?: 'low' | 'medium' | 'high' | 'urgent';
             startDate?: Date;
@@ -307,6 +319,7 @@ export const updateProject = async (req: Request, res: Response, next: NextFunct
         // Update allowed fields
         if (title) project.title = title;
         if (description) project.description = description;
+        if (link !== undefined) project.link = link;
         if (status) project.status = status;
         if (priority) project.priority = priority;
         if (startDate) project.startDate = startDate;
@@ -1033,4 +1046,3 @@ export const getProjectStats = async (req: Request, res: Response, next: NextFun
         next(errorHandler(500, "Server error while fetching project statistics"));
     }
 };
-
