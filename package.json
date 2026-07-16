@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "typescript": "~5.8.0"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",
