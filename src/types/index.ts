@@ -335,3 +335,41 @@ export interface IContactMessage extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+// ===== QUOTATION REQUEST TYPES =====
+export type QuotationRequestStatus = 'new' | 'reviewed' | 'converted' | 'rejected';
+
+export interface IQuotationRequest extends Document {
+  _id: string;
+  requestNumber: string;
+  // Contact
+  name: string;
+  email: string;
+  phone?: string;
+  company?: string;
+  country?: string;
+  // Project scope
+  projectTitle: string;
+  projectType: Types.ObjectId; // Reference to Service
+  description: string;
+  services?: string[];
+  // Constraints
+  budget?: string;
+  deadline?: Date;
+  // Supporting
+  attachments?: string[];
+  notes?: string;
+  referralSource?: string;
+  // System / admin fields
+  status: QuotationRequestStatus;
+  assignedTo?: Types.ObjectId;
+  linkedProject?: Types.ObjectId;
+  linkedUser?: Types.ObjectId;
+  // Audit timestamps
+  reviewedAt?: Date;
+  convertedAt?: Date;
+  rejectedAt?: Date;
+  rejectionReason?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}

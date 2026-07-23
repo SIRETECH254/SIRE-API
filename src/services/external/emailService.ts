@@ -471,6 +471,166 @@ export const sendContactFormNotification = async (email: string, name: string, s
     }
 };
 
+// Send quotation request notification to admin
+export const sendQuotationRequestNotification = async (request: {
+    requestNumber: string;
+    name: string;
+    email: string;
+    phone?: string;
+    company?: string;
+    country?: string;
+    projectTitle: string;
+    projectType: string;
+    description: string;
+    services?: string[];
+    budget?: string;
+    deadline?: Date;
+    notes?: string;
+    referralSource?: string;
+}): Promise<{ success: boolean; messageId: string }> => {
+    try {
+        initializeSendGrid();
+        const adminEmail = process.env.FROM_EMAIL || process.env.SMTP_USER || 'admin@siretech.com';
+        const deadlineText = request.deadline
+            ? new Date(request.deadline).toLocaleDateString()
+            : 'Not specified';
+        const servicesText = request.services && request.services.length > 0
+            ? request.services.join(', ')
+            : 'Not specified';
+
+        const mailOptions = {
+            from: `SIRE Tech RFQ System <${process.env.SMTP_FROM}>`,
+            to: adminEmail,
+            subject: `New Quotation Request ${request.requestNumber} - ${request.projectTitle}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">New Request for Quotation</p>
+                    </div>
+
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 5px;">RFQ ${request.requestNumber}</h2>
+                        <p style="color: #2563eb; margin-top: 0; margin-bottom: 25px; font-weight: bold;">${request.projectTitle}</p>
+
+                        <h3 style="color: #333; margin-bottom: 10px;">Contact Information</h3>
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Name:</strong> ${request.name}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Email:</strong> ${request.email}</p>
+                            ${request.phone ? `<p style="margin: 5px 0; color: #333;"><strong>Phone:</strong> ${request.phone}</p>` : ''}
+                            ${request.company ? `<p style="margin: 5px 0; color: #333;"><strong>Company:</strong> ${request.company}</p>` : ''}
+                            ${request.country ? `<p style="margin: 5px 0; color: #333;"><strong>Country:</strong> ${request.country}</p>` : ''}
+                        </div>
+
+                        <h3 style="color: #333; margin-bottom: 10px;">Project Scope</h3>
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Project Type:</strong> ${request.projectType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Services Requested:</strong> ${servicesText}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Budget:</strong> ${request.budget || 'Not specified'}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Deadline:</strong> ${deadlineText}</p>
+                        </div>
+
+                        <h3 style="color: #333; margin-bottom: 10px;">Description</h3>
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <p style="color: #666; line-height: 1.6; white-space: pre-wrap; margin: 0;">${request.description}</p>
+                        </div>
+
+                        ${request.notes ? `
+                        <h3 style="color: #333; margin-bottom: 10px;">Additional Notes</h3>
+                        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <p style="color: #856404; margin: 0;">${request.notes}</p>
+                        </div>
+                        ` : ''}
+
+                        ${request.referralSource ? `<p style="color: #999; font-size: 13px; margin-bottom: 20px;"><strong>Referred by:</strong> ${request.referralSource}</p>` : ''}
+
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin/quotation-requests" style="background: #2563eb; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                                View in Dashboard
+                            </a>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated notification from the RFQ system.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        const response = await sgMail.send(mailOptions);
+        console.log("Quotation request admin notification sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] as string };
+
+    } catch (error: any) {
+        console.error('Error sending quotation request notification:', error);
+        throw errorHandler(500, `Failed to send quotation request notification: ${error.message}`);
+    }
+};
+
+// Send acknowledgement email to client after RFQ submission
+export const sendQuotationRequestAcknowledgement = async (
+    clientEmail: string,
+    clientName: string,
+    requestNumber: string,
+    projectTitle: string
+): Promise<{ success: boolean; messageId: string }> => {
+    try {
+        initializeSendGrid();
+
+        const mailOptions = {
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
+            to: clientEmail,
+            subject: `We received your quotation request - ${requestNumber}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #2563eb; margin: 0;">SIRE Tech</h1>
+                        <p style="color: #666; margin: 5px 0;">Your Business Management Partner</p>
+                    </div>
+
+                    <div style="background: #f8f9fa; padding: 30px; border-radius: 8px;">
+                        <h2 style="color: #333; margin-bottom: 20px;">Request Received!</h2>
+                        <p style="color: #666; margin-bottom: 20px;">Hi ${clientName},</p>
+                        <p style="color: #666; margin-bottom: 25px;">
+                            Thank you for reaching out to SIRE Tech. We have successfully received your quotation request and our team is reviewing it.
+                        </p>
+
+                        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2563eb;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Request Number:</strong> ${requestNumber}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Project:</strong> ${projectTitle}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Status:</strong> Under Review</p>
+                        </div>
+
+                        <div style="background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; padding: 20px; border-radius: 8px; text-align: center; margin: 25px 0;">
+                            <h3 style="margin: 0 0 10px 0;">What Happens Next?</h3>
+                            <p style="margin: 0; opacity: 0.9; font-size: 14px;">Our team will review your requirements and get back to you within <strong>1–2 business days</strong> with a detailed quotation.</p>
+                        </div>
+
+                        <p style="color: #666; font-size: 14px; margin-top: 25px;">
+                            Please keep your request number <strong>${requestNumber}</strong> for future reference. If you have any urgent questions, feel free to contact us directly.
+                        </p>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 30px; color: #999; font-size: 12px;">
+                        <p>SIRE Tech - Business Management Solutions</p>
+                        <p>This is an automated confirmation. Please do not reply to this email.</p>
+                    </div>
+                </div>
+            `
+        };
+
+        const response = await sgMail.send(mailOptions);
+        console.log("Quotation request acknowledgement sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] as string };
+
+    } catch (error: any) {
+        console.error('Error sending quotation request acknowledgement:', error);
+        throw errorHandler(500, `Failed to send quotation request acknowledgement: ${error.message}`);
+    }
+};
+
 // Send contact form reply email to sender
 export const sendContactReplyEmail = async (email: string, name: string, subject: string, reply: string) => {
     if (!email || !name || !subject || !reply) {

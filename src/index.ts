@@ -18,6 +18,7 @@ import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import testimonialRoutes from './routes/testimonialRoutes';
 import contactRoutes from './routes/contactRoutes';
+import quotationRequestRoutes from './routes/quotationRequestRoutes';
 import dashboardRoutes from './routes/dashboardRoutes';
 
 
@@ -94,6 +95,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 
 app.use("/api/contact", contactRoutes);
+
+app.use("/api/quotation-requests", quotationRequestRoutes);
 
 app.use("/api/dashboard", dashboardRoutes);
 

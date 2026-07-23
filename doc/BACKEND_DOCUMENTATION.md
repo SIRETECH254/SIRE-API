@@ -380,6 +380,55 @@ interface IContactMessage {
 
 ---
 
+### 11. QuotationRequest Model
+```typescript
+interface IQuotationRequest {
+  _id: ObjectId;
+  requestNumber: string; // Auto-generated (RQR-YYYY-0001)
+  // Contact
+  name: string;
+  email: string;
+  phone?: string;
+  company?: string;
+  country?: string;
+  // Project scope
+  projectTitle: string;
+  projectType: 'web_development' | 'mobile_app' | 'ui_ux_design' | 'cloud_infrastructure'
+             | 'data_analytics' | 'cybersecurity' | 'ai_ml' | 'consulting' | 'other';
+  description: string; // 20–2000 chars
+  services?: string[]; // free-text service names
+  // Constraints
+  budget?: string;     // e.g. "$5,000–$10,000" (string range)
+  deadline?: Date;
+  // Supporting
+  attachments?: string[]; // Cloudinary URLs, max 10
+  notes?: string;         // max 500 chars
+  referralSource?: string;
+  // System / admin
+  status: 'new' | 'reviewed' | 'converted' | 'rejected';
+  assignedTo?: ObjectId;   // Reference to User
+  linkedProject?: ObjectId; // Reference to Project (set on convert)
+  linkedUser?: ObjectId;   // Reference to User (auto-matched by email or set on convert)
+  // Audit
+  reviewedAt?: Date;
+  convertedAt?: Date;
+  rejectedAt?: Date;
+  rejectionReason?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**Notes:**
+- `requestNumber` is auto-generated in a pre-save hook using year-prefix regex count (`RQR-YYYY-0001`).
+- `budget` is a `string`, not a number — clients submit ranges like "$5,000–$10,000".
+- `services` is `string[]` (not ObjectId refs) — submitter is anonymous and enters free text.
+- Terminal statuses (`converted`, `rejected`) cannot be changed via `PATCH /:id/status`.
+- `convertToProject` uses a Mongoose session for atomic writes across two collections.
+- Status flow: `new → reviewed → converted` (terminal) or `new/reviewed → rejected` (terminal).
+
+---
+
 ## 🎮 Controllers
 
 ### 1. Auth Controllers
@@ -550,7 +599,19 @@ interface IContactMessage {
 
 ---
 
-### 11. Dashboard Controllers
+### 11. QuotationRequest Controllers
+
+#### `quotationRequestController.ts`
+- `submitQuotationRequest()` - Public RFQ submission (no auth required); sends admin alert email + client acknowledgement + in-app notifications to admin team
+- `getAllQuotationRequests()` - Get all requests with pagination and filters (`status`, `projectType`, `assignedTo`, `search`)
+- `getQuotationRequest()` - Get single request with full population
+- `updateRequestStatus()` - Move request to `reviewed` or `rejected` (sets audit timestamps, notifies assignee/client)
+- `convertToProject()` - Atomically create a Project from the RFQ (requires `clientUserId`); uses Mongoose session
+- `deleteQuotationRequest()` - Delete request (blocked if `converted`)
+
+---
+
+### 12. Dashboard Controllers
 
 #### `dashboardController.ts`
 - `getAdminDashboard()` - Admin dashboard stats
@@ -562,7 +623,7 @@ interface IContactMessage {
 
 ---
 
-### 12. User Controllers (Admin Management)
+### 13. User Controllers (Admin Management)
 
 #### `userController.ts`
 - `getUserProfile()` - Get current user profile
@@ -774,6 +835,26 @@ PATCH  /:messageId/archive        // Archive message
 
 ---
 
+### Quotation Request Routes
+**Base:** `/api/quotation-requests`
+
+```typescript
+POST   /                          // Submit RFQ — Public (no auth)
+GET    /                          // Get all requests (super_admin, finance, project_manager)
+PATCH  /:requestId/status         // Update status to reviewed/rejected (admin)
+POST   /:requestId/convert        // Convert to Project (super_admin, project_manager)
+GET    /:requestId                // Get single request (admin)
+DELETE /:requestId                // Delete request (super_admin only)
+```
+
+**Access summary:**
+- `POST /` — no authentication required
+- All other routes — require `authenticateToken`
+- Convert — requires `super_admin` or `project_manager` role
+- Delete — requires `super_admin` role only
+
+---
+
 ### Dashboard Routes
 **Base:** `/api/dashboard`
 
@@ -834,6 +915,7 @@ sire-api/
 │   │   ├── User.ts
 │   │   ├── Role.ts
 │   │   ├── Service.ts
+│   │   ├── QuotationRequest.ts   # Public RFQ intake (entry point)
 │   │   ├── Quotation.ts
 │   │   ├── Invoice.ts
 │   │   ├── Payment.ts
@@ -845,6 +927,7 @@ sire-api/
 │   │   ├── authController.ts
 │   │   ├── roleController.ts
 │   │   ├── serviceController.ts
+│   │   ├── quotationRequestController.ts  # Public RFQ intake
 │   │   ├── quotationController.ts
 │   │   ├── invoiceController.ts
 │   │   ├── paymentController.ts
@@ -858,6 +941,7 @@ sire-api/
 │   │   ├── authRoutes.ts
 │   │   ├── roleRoutes.ts
 │   │   ├── serviceRoutes.ts
+│   │   ├── quotationRequestRoutes.ts  # Public RFQ intake
 │   │   ├── quotationRoutes.ts
 │   │   ├── invoiceRoutes.ts
 │   │   ├── paymentRoutes.ts
