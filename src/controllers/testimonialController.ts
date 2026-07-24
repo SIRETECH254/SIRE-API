@@ -74,13 +74,12 @@ export const createTestimonial = async (req: Request, res: Response, next: NextF
 
         // Send notification to admins
         try {
-            const User = await import('../models/User').then(m => m.default);
-            const admins = await User.find({ 
+            const admins = await User.find({
                 role: { $in: ['super_admin', 'finance', 'project_manager'] },
                 isActive: true 
             });
 
-            const notificationPromises = admins.map(admin => 
+            const notificationPromises = admins.map((admin: any) =>
                 createInAppNotification({
                     recipient: admin._id.toString(),
                     recipientModel: 'User',
