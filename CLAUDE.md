@@ -445,6 +445,8 @@ Each module has a dedicated doc file in `doc/`. The structure follows the patter
 
 **Critical rule:** The data in a module doc (field names, types, validation constraints, response shapes, middleware chains) must exactly match what is in the actual source files at the time of writing. Never document intended behaviour — document what the code does. When the code changes, the doc must be updated to match.
 
+**Update rule:** Any time a module is touched — a field added or removed, a controller function changed, a route modified, a validation updated — its `doc/` file must be updated in the same change. The doc and the code are always in sync; stale documentation is treated as a bug.
+
 ```
 doc/
 └── USER_DOCUMENTATION.md       ← model + controller + routes for /api/users

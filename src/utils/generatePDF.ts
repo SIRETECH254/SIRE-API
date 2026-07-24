@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { WritableStreamBuffer } from 'stream-buffers';
+import path from 'path';
 
 type PDFKitDocument = InstanceType<typeof PDFDocument>;
 
@@ -225,14 +226,10 @@ const renderDocument = (
     const rightX = margin + columnWidth + columnGap;
 
     const headerY = 40;
-    doc.font('Helvetica-Bold')
-        .fontSize(16)
-        .fillColor(TEXT_COLOR)
-        .text('SIRE Tech', leftX, headerY, { width: columnWidth });
-    doc.font('Helvetica')
-        .fontSize(9)
-        .fillColor(MUTED_COLOR)
-        .text('Business Management Solutions', leftX, headerY + 18, { width: columnWidth });
+    const logoPath = path.join(__dirname, '../../assests/logo/LIZEN_LOGO.png');
+    try {
+        doc.image(logoPath, leftX, headerY, { width: 40, height: 40 });
+    } catch (_) {}
 
     doc.font('Helvetica-Bold')
         .fontSize(26)
