@@ -28,8 +28,6 @@ const router = express.Router();
  *   get:
  *     tags: [Projects]
  *     summary: Get all projects with filtering and pagination
- *     security:
- *       - bearerAuth: []
  *     responses:
  *       '200':
  *         description: List of projects
@@ -273,9 +271,9 @@ router.post('/', authenticateToken, authorizeRoles(['super_admin', 'project_mana
 /**
  * @route   GET /api/projects
  * @desc    Get all projects with filtering and pagination
- * @access  Private (Admin, Project Manager)
+ * @access  Public
  */
-router.get('/', authenticateToken, authorizeRoles(['super_admin', 'project_manager', 'finance']), getAllProjects);
+router.get('/', getAllProjects);
 
 /**
  * @route   GET /api/projects/stats
@@ -366,7 +364,7 @@ router.delete('/:projectId/milestones/:milestoneId', authenticateToken, deleteMi
  * @desc    Upload project attachments (multiple files supported, max 10)
  * @access  Private (Admin or Assigned Team Member)
  */
-router.post('/:projectId/attachments', authenticateToken, uploadProjectAttachment.array('files', 10), uploadAttachment);
+router.post('/:projectId/attachments', authenticateToken, uploadProjectAttachment.any(), uploadAttachment);
 
 /**
  * @route   DELETE /api/projects/:projectId/attachments/:attachmentId
@@ -376,4 +374,3 @@ router.post('/:projectId/attachments', authenticateToken, uploadProjectAttachmen
 router.delete('/:projectId/attachments/:attachmentId', authenticateToken, deleteAttachment);
 
 export default router;
-

@@ -1,6 +1,300 @@
 import PDFDocument from 'pdfkit';
 import { WritableStreamBuffer } from 'stream-buffers';
-import type { IQuotation, IInvoice } from '../types';
+
+type PDFKitDocument = InstanceType<typeof PDFDocument>;
+
+const THEME_COLOR = '#7b1c1c';
+const TEXT_COLOR = '#222222';
+const MUTED_COLOR = '#666666';
+const LIGHT_ROW = '#f5f5f5';
+const BORDER_COLOR = '#d9d9d9';
+
+const formatMoney = (value: number, forceNegative: boolean = false): string => {
+    const amount = Number(value || 0);
+    const formatted = `KES ${Math.abs(amount).toFixed(2)}`;
+    return forceNegative || amount < 0 ? `-${formatted}` : formatted;
+};
+
+const formatDate = (value?: any): string => {
+    if (!value) return 'N/A';
+    return new Date(value).toLocaleDateString();
+};
+
+const drawSectionTitle = (doc: PDFKitDocument, text: string, x: number, y: number, width: number): number => {
+    doc.font('Helvetica-Bold')
+        .fontSize(10)
+        .fillColor(THEME_COLOR)
+        .text(text, x, y, { width });
+    return y + 14;
+};
+
+const drawLines = (doc: PDFKitDocument, lines: string[], x: number, y: number, width: number): number => {
+    let currentY = y;
+    lines.filter(Boolean).forEach((line) => {
+        doc.font('Helvetica')
+            .fontSize(10)
+            .fillColor(TEXT_COLOR)
+            .text(line, x, currentY, { width });
+        currentY += 14;
+    });
+    return currentY;
+};
+
+const drawKeyValueRows = (
+    doc: PDFKitDocument,
+    rows: Array<{ label: string; value: string }>,
+    x: number,
+    y: number,
+    width: number
+): number => {
+    const labelWidth = Math.round(width * 0.55);
+    const valueWidth = width - labelWidth;
+    let currentY = y;
+
+    rows.forEach((row) => {
+        doc.font('Helvetica-Bold')
+            .fontSize(9)
+            .fillColor(THEME_COLOR)
+            .text(row.label, x, currentY, { width: labelWidth });
+        doc.font('Helvetica')
+            .fontSize(9)
+            .fillColor(TEXT_COLOR)
+            .text(row.value, x + labelWidth, currentY, { width: valueWidth, align: 'right' });
+        currentY += 14;
+    });
+
+    return currentY;
+};
+
+const drawItemsTable = (
+    doc: PDFKitDocument,
+    items: any[],
+    startY: number,
+    contentX: number,
+    contentWidth: number
+): number => {
+    const headerHeight = 24;
+    const rowHeight = 22;
+    const qtyWidth = 50;
+    const unitWidth = 90;
+    const amountWidth = 90;
+    const descWidth = contentWidth - qtyWidth - unitWidth - amountWidth;
+
+    const columns = [
+        { key: 'qty', label: 'QTY', width: qtyWidth, align: 'right' as const },
+        { key: 'desc', label: 'Description', width: descWidth, align: 'left' as const },
+        { key: 'unit', label: 'Unit Price', width: unitWidth, align: 'right' as const },
+        { key: 'amount', label: 'Amount', width: amountWidth, align: 'right' as const }
+    ];
+
+    const drawHeader = (y: number) => {
+        doc.rect(contentX, y, contentWidth, headerHeight).fill(THEME_COLOR);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff');
+        let x = contentX;
+        columns.forEach((col) => {
+            doc.text(col.label, x + 4, y + 7, { width: col.width - 8, align: col.align });
+            x += col.width;
+        });
+    };
+
+    drawHeader(startY);
+    let rowY = startY + headerHeight;
+
+    if (items && items.length > 0) {
+        items.forEach((item: any, index: number) => {
+            if (rowY + rowHeight > doc.page.height - 90) {
+                doc.addPage();
+                rowY = 50;
+                drawHeader(rowY);
+                rowY += headerHeight;
+            }
+
+            if (index % 2 === 0) {
+                doc.rect(contentX, rowY, contentWidth, rowHeight).fill(LIGHT_ROW);
+            }
+
+            const quantity = Number(item.quantity || 0);
+            const unitPrice = Number(item.unitPrice || 0);
+            const total = Number(item.total || quantity * unitPrice);
+
+            doc.font('Helvetica').fontSize(9).fillColor(TEXT_COLOR);
+            let x = contentX;
+            doc.text(quantity.toFixed(0), x + 4, rowY + 6, { width: qtyWidth - 8, align: 'right' });
+            x += qtyWidth;
+            doc.text(item.description || 'N/A', x + 4, rowY + 6, { width: descWidth - 8 });
+            x += descWidth;
+            doc.text(formatMoney(unitPrice), x + 4, rowY + 6, { width: unitWidth - 8, align: 'right' });
+            x += unitWidth;
+            doc.text(formatMoney(total), x + 4, rowY + 6, { width: amountWidth - 8, align: 'right' });
+
+            rowY += rowHeight;
+        });
+    }
+
+    return rowY;
+};
+
+const drawTotals = (
+    doc: PDFKitDocument,
+    startY: number,
+    contentX: number,
+    contentWidth: number,
+    totals: {
+        subtotal: number;
+        tax?: number;
+        discount?: number;
+        total: number;
+    }
+): number => {
+    const blockWidth = 200;
+    const labelWidth = 110;
+    const valueWidth = blockWidth - labelWidth;
+    const totalsX = contentX + contentWidth - blockWidth;
+    let currentY = startY;
+
+    doc.moveTo(totalsX, currentY - 6)
+        .lineTo(totalsX + blockWidth, currentY - 6)
+        .strokeColor(BORDER_COLOR)
+        .stroke();
+
+    const rows: Array<{ label: string; value: string }> = [
+        { label: 'Subtotal', value: formatMoney(totals.subtotal) }
+    ];
+    if (totals.tax && totals.tax > 0) {
+        rows.push({ label: 'Tax', value: formatMoney(totals.tax) });
+    }
+    if (totals.discount && totals.discount > 0) {
+        rows.push({ label: 'Discount', value: formatMoney(totals.discount, true) });
+    }
+
+    rows.forEach((row) => {
+        doc.font('Helvetica')
+            .fontSize(9)
+            .fillColor(TEXT_COLOR)
+            .text(row.label, totalsX, currentY, { width: labelWidth });
+        doc.text(row.value, totalsX + labelWidth, currentY, { width: valueWidth, align: 'right' });
+        currentY += 14;
+    });
+
+    doc.moveTo(totalsX, currentY + 2)
+        .lineTo(totalsX + blockWidth, currentY + 2)
+        .strokeColor(BORDER_COLOR)
+        .stroke();
+
+    currentY += 8;
+
+    doc.font('Helvetica-Bold')
+        .fontSize(11)
+        .fillColor(THEME_COLOR)
+        .text('Total', totalsX, currentY, { width: labelWidth });
+    doc.text(formatMoney(totals.total), totalsX + labelWidth, currentY, {
+        width: valueWidth,
+        align: 'right'
+    });
+
+    return currentY + 18;
+};
+
+const renderDocument = (
+    doc: PDFKitDocument,
+    options: {
+        title: 'QUOTATION' | 'INVOICE';
+        numberLabel: string;
+        numberValue: string;
+        dateLabel: string;
+        dateValue: string;
+        dueLabel: string;
+        dueValue: string;
+        client?: any;
+        projectTitle?: string;
+        projectNumber?: string;
+        quotationNumber?: string;
+        items?: any[];
+        subtotal: number;
+        tax?: number;
+        discount?: number;
+        total: number;
+        notes?: string;
+    }
+): void => {
+    const margin = 50;
+    const contentWidth = doc.page.width - margin * 2;
+    const columnGap = 20;
+    const columnWidth = (contentWidth - columnGap) / 2;
+    const leftX = margin;
+    const rightX = margin + columnWidth + columnGap;
+
+    const headerY = 40;
+    doc.font('Helvetica-Bold')
+        .fontSize(16)
+        .fillColor(TEXT_COLOR)
+        .text('SIRE Tech', leftX, headerY, { width: columnWidth });
+    doc.font('Helvetica')
+        .fontSize(9)
+        .fillColor(MUTED_COLOR)
+        .text('Business Management Solutions', leftX, headerY + 18, { width: columnWidth });
+
+    doc.font('Helvetica-Bold')
+        .fontSize(26)
+        .fillColor(THEME_COLOR)
+        .text(options.title, rightX, headerY, { width: columnWidth, align: 'right' });
+
+    const metaY = headerY + 60;
+    const metaRows = [
+        { label: options.numberLabel, value: options.numberValue },
+        { label: options.dateLabel, value: options.dateValue },
+        { label: options.dueLabel, value: options.dueValue }
+    ];
+
+    let rightY = drawKeyValueRows(doc, metaRows, rightX, metaY, columnWidth);
+
+    if (options.projectTitle) {
+        rightY += 10;
+        rightY = drawSectionTitle(doc, 'Project', rightX, rightY, columnWidth);
+        rightY = drawLines(doc, [options.projectTitle], rightX, rightY, columnWidth);
+        if (options.projectNumber) {
+            rightY = drawLines(doc, [`Project #: ${options.projectNumber}`], rightX, rightY, columnWidth);
+        }
+        if (options.quotationNumber) {
+            rightY = drawLines(doc, [`Quotation #: ${options.quotationNumber}`], rightX, rightY, columnWidth);
+        }
+    }
+
+    let leftY = metaY;
+    leftY = drawSectionTitle(doc, 'Bill To', leftX, leftY, columnWidth);
+    if (options.client) {
+        const client = options.client;
+        const name = `${client.firstName || ''} ${client.lastName || ''}`.trim();
+        const addressParts: string[] = [];
+        if (client.address) addressParts.push(client.address);
+        if (client.city) addressParts.push(client.city);
+        if (client.country) addressParts.push(client.country);
+        const lines = [
+            name,
+            client.company || '',
+            client.email || '',
+            client.phone || '',
+            addressParts.join(', ')
+        ];
+        leftY = drawLines(doc, lines, leftX, leftY, columnWidth);
+    }
+
+    const tableStartY = Math.max(leftY, rightY) + 20;
+    const tableEndY = drawItemsTable(doc, options.items || [], tableStartY, margin, contentWidth);
+
+    const totalsEndY = drawTotals(doc, tableEndY + 14, margin, contentWidth, {
+        subtotal: options.subtotal,
+        tax: Number(options.tax || 0),
+        discount: Number(options.discount || 0),
+        total: options.total
+    });
+
+    if (options.notes) {
+        let notesY = totalsEndY + 20;
+        notesY = drawSectionTitle(doc, 'Notes', leftX, notesY, contentWidth);
+        drawLines(doc, [options.notes], leftX, notesY, contentWidth);
+    }
+};
 
 /**
  * Generate PDF for Quotation
@@ -15,175 +309,24 @@ export const generateQuotationPDF = async (quotation: any): Promise<Buffer> => {
 
             doc.pipe(stream);
 
-            // Header Section
-            doc.fontSize(24)
-                .fillColor('#333333')
-                .text('QUOTATION', 50, 50, { align: 'left' });
-
-            doc.fontSize(10)
-                .fillColor('#666666')
-                .text(`Quotation Number: ${quotation.quotationNumber || 'N/A'}`, 50, 80)
-                .text(`Date: ${new Date(quotation.createdAt || Date.now()).toLocaleDateString()}`, 50, 95)
-                .text(`Valid Until: ${quotation.validUntil ? new Date(quotation.validUntil).toLocaleDateString() : 'N/A'}`, 50, 110);
-
-            // Client Information Section
-            let currentY = 150;
-            if (quotation.client) {
-                const client = quotation.client;
-                doc.fontSize(14)
-                    .fillColor('#333333')
-                    .text('Bill To:', 50, currentY);
-
-                currentY += 20;
-                doc.fontSize(11)
-                    .fillColor('#000000')
-                    .text(`${client.firstName || ''} ${client.lastName || ''}`, 50, currentY)
-                    .text(client.company || '', 50, currentY + 15)
-                    .text(client.email || '', 50, currentY + 30)
-                    .text(client.phone || '', 50, currentY + 45);
-
-                if (client.address || client.city || client.country) {
-                    let addressParts: string[] = [];
-                    if (client.address) addressParts.push(client.address);
-                    if (client.city) addressParts.push(client.city);
-                    if (client.country) addressParts.push(client.country);
-                    doc.text(addressParts.join(', '), 50, currentY + 60);
-                }
-            }
-
-            // Project Information
-            if (quotation.project) {
-                const project = quotation.project;
-                currentY += 100;
-                doc.fontSize(14)
-                    .fillColor('#333333')
-                    .text('Project:', 350, currentY);
-
-                currentY += 20;
-                doc.fontSize(11)
-                    .fillColor('#000000')
-                    .text(project.title || 'N/A', 350, currentY, { width: 200 })
-                    .text(`Project #: ${project.projectNumber || 'N/A'}`, 350, currentY + 30);
-            }
-
-            // Items Table
-            currentY += 120;
-            const tableTop = currentY;
-            const itemDescX = 50;
-            const quantityX = 350;
-            const priceX = 420;
-            const totalX = 520;
-
-            // Table Header
-            doc.fontSize(10)
-                .fillColor('#FFFFFF')
-                .rect(itemDescX - 5, tableTop - 5, 460, 25)
-                .fill('#333333');
-
-            doc.fontSize(10)
-                .fillColor('#FFFFFF')
-                .font('Helvetica-Bold')
-                .text('Description', itemDescX, tableTop)
-                .text('Qty', quantityX, tableTop)
-                .text('Price', priceX, tableTop)
-                .text('Total', totalX, tableTop);
-
-            // Table Rows
-            let rowY = tableTop + 30;
-            doc.font('Helvetica')
-                .fillColor('#000000');
-
-            if (quotation.items && quotation.items.length > 0) {
-                quotation.items.forEach((item: any, index: number) => {
-                    if (rowY > 700) {
-                        // Add new page if needed
-                        doc.addPage();
-                        rowY = 50;
-                    }
-
-                    // Alternate row colors
-                    if (index % 2 === 0) {
-                        doc.rect(itemDescX - 5, rowY - 5, 460, 20)
-                            .fill('#F8F8F8');
-                    }
-
-                    doc.fontSize(9)
-                        .fillColor('#000000')
-                        .text(item.description || 'N/A', itemDescX, rowY, { width: 280 })
-                        .text((item.quantity || 0).toString(), quantityX, rowY)
-                        .text(`$${(item.unitPrice || 0).toFixed(2)}`, priceX, rowY)
-                        .text(`$${(item.total || 0).toFixed(2)}`, totalX, rowY);
-
-                    rowY += 25;
-                });
-            }
-
-            // Totals Section
-            const totalsY = rowY + 20;
-            doc.fontSize(10)
-                .fillColor('#000000');
-
-            // Draw line above totals
-            doc.moveTo(itemDescX, totalsY - 10)
-                .lineTo(totalX + 50, totalsY - 10)
-                .stroke();
-
-            // Subtotal
-            doc.text('Subtotal:', priceX - 50, totalsY, { width: 100, align: 'right' });
-            doc.text(`$${(quotation.subtotal || 0).toFixed(2)}`, totalX, totalsY);
-
-            // Tax
-            if (quotation.tax && quotation.tax > 0) {
-                doc.text('Tax:', priceX - 50, totalsY + 20, { width: 100, align: 'right' });
-                doc.text(`$${(quotation.tax || 0).toFixed(2)}`, totalX, totalsY + 20);
-            }
-
-            // Discount
-            if (quotation.discount && quotation.discount > 0) {
-                doc.text('Discount:', priceX - 50, totalsY + 40, { width: 100, align: 'right' });
-                doc.text(`-$${(quotation.discount || 0).toFixed(2)}`, totalX, totalsY + 40);
-            }
-
-            // Total Amount
-            const totalAmountY = totalsY + (quotation.tax && quotation.tax > 0 ? 40 : 20) + (quotation.discount && quotation.discount > 0 ? 20 : 0);
-            doc.moveTo(itemDescX, totalAmountY - 10)
-                .lineTo(totalX + 50, totalAmountY - 10)
-                .stroke();
-
-            doc.fontSize(12)
-                .font('Helvetica-Bold')
-                .fillColor('#000000')
-                .text('Total Amount:', priceX - 50, totalAmountY, { width: 100, align: 'right' });
-            doc.text(`$${(quotation.totalAmount || 0).toFixed(2)}`, totalX, totalAmountY);
-
-            // Notes Section
-            if (quotation.notes) {
-                const notesY = totalAmountY + 50;
-                doc.fontSize(10)
-                    .font('Helvetica')
-                    .fillColor('#333333')
-                    .text('Notes:', 50, notesY);
-
-                doc.fontSize(9)
-                    .fillColor('#666666')
-                    .text(quotation.notes, 50, notesY + 20, { width: 500 });
-            }
-
-            // Status
-            const statusY = doc.page.height - 100;
-            doc.fontSize(10)
-                .fillColor('#666666')
-                .text(`Status: ${quotation.status?.toUpperCase() || 'PENDING'}`, 50, statusY);
-
-            // Footer
-            doc.fontSize(8)
-                .fillColor('#999999')
-                .text(
-                    `Generated on ${new Date().toLocaleString()}`,
-                    50,
-                    doc.page.height - 50,
-                    { align: 'center', width: 500 }
-                );
+            renderDocument(doc, {
+                title: 'QUOTATION',
+                numberLabel: 'Quotation #',
+                numberValue: quotation.quotationNumber || 'N/A',
+                dateLabel: 'Date',
+                dateValue: formatDate(quotation.createdAt || Date.now()),
+                dueLabel: 'Valid until',
+                dueValue: formatDate(quotation.validUntil),
+                client: quotation.client,
+                projectTitle: quotation.project?.title,
+                projectNumber: quotation.project?.projectNumber,
+                items: quotation.items || [],
+                subtotal: Number(quotation.subtotal || 0),
+                tax: Number(quotation.tax || 0),
+                discount: Number(quotation.discount || 0),
+                total: Number(quotation.totalAmount || 0),
+                notes: quotation.notes
+            });
 
             doc.end();
 
@@ -214,191 +357,24 @@ export const generateInvoicePDF = async (invoice: any): Promise<Buffer> => {
 
             doc.pipe(stream);
 
-            // Header Section
-            doc.fontSize(24)
-                .fillColor('#333333')
-                .text('INVOICE', 50, 50, { align: 'left' });
-
-            doc.fontSize(10)
-                .fillColor('#666666')
-                .text(`Invoice Number: ${invoice.invoiceNumber || 'N/A'}`, 50, 80)
-                .text(`Date: ${new Date(invoice.createdAt || Date.now()).toLocaleDateString()}`, 50, 95)
-                .text(`Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}`, 50, 110);
-
-            // Client Information Section
-            let currentY = 150;
-            if (invoice.client) {
-                const client = invoice.client;
-                doc.fontSize(14)
-                    .fillColor('#333333')
-                    .text('Bill To:', 50, currentY);
-
-                currentY += 20;
-                doc.fontSize(11)
-                    .fillColor('#000000')
-                    .text(`${client.firstName || ''} ${client.lastName || ''}`, 50, currentY)
-                    .text(client.company || '', 50, currentY + 15)
-                    .text(client.email || '', 50, currentY + 30)
-                    .text(client.phone || '', 50, currentY + 45);
-
-                if (client.address || client.city || client.country) {
-                    let addressParts: string[] = [];
-                    if (client.address) addressParts.push(client.address);
-                    if (client.city) addressParts.push(client.city);
-                    if (client.country) addressParts.push(client.country);
-                    doc.text(addressParts.join(', '), 50, currentY + 60);
-                }
-            }
-
-            // Project Information
-            if (invoice.projectTitle) {
-                currentY += 100;
-                doc.fontSize(14)
-                    .fillColor('#333333')
-                    .text('Project:', 350, currentY);
-
-                currentY += 20;
-                doc.fontSize(11)
-                    .fillColor('#000000')
-                    .text(invoice.projectTitle || 'N/A', 350, currentY, { width: 200 });
-
-                if (invoice.quotation) {
-                    const quotation = invoice.quotation as any;
-                    doc.text(`Quotation #: ${quotation.quotationNumber || 'N/A'}`, 350, currentY + 30);
-                }
-            }
-
-            // Items Table
-            currentY += 120;
-            const tableTop = currentY;
-            const itemDescX = 50;
-            const quantityX = 350;
-            const priceX = 420;
-            const totalX = 520;
-
-            // Table Header
-            doc.fontSize(10)
-                .fillColor('#FFFFFF')
-                .rect(itemDescX - 5, tableTop - 5, 460, 25)
-                .fill('#333333');
-
-            doc.fontSize(10)
-                .fillColor('#FFFFFF')
-                .font('Helvetica-Bold')
-                .text('Description', itemDescX, tableTop)
-                .text('Qty', quantityX, tableTop)
-                .text('Price', priceX, tableTop)
-                .text('Total', totalX, tableTop);
-
-            // Table Rows
-            let rowY = tableTop + 30;
-            doc.font('Helvetica')
-                .fillColor('#000000');
-
-            if (invoice.items && invoice.items.length > 0) {
-                invoice.items.forEach((item: any, index: number) => {
-                    if (rowY > 700) {
-                        // Add new page if needed
-                        doc.addPage();
-                        rowY = 50;
-                    }
-
-                    // Alternate row colors
-                    if (index % 2 === 0) {
-                        doc.rect(itemDescX - 5, rowY - 5, 460, 20)
-                            .fill('#F8F8F8');
-                    }
-
-                    doc.fontSize(9)
-                        .fillColor('#000000')
-                        .text(item.description || 'N/A', itemDescX, rowY, { width: 280 })
-                        .text((item.quantity || 0).toString(), quantityX, rowY)
-                        .text(`$${(item.unitPrice || 0).toFixed(2)}`, priceX, rowY)
-                        .text(`$${(item.total || 0).toFixed(2)}`, totalX, rowY);
-
-                    rowY += 25;
-                });
-            }
-
-            // Totals Section
-            const totalsY = rowY + 20;
-            doc.fontSize(10)
-                .fillColor('#000000');
-
-            // Draw line above totals
-            doc.moveTo(itemDescX, totalsY - 10)
-                .lineTo(totalX + 50, totalsY - 10)
-                .stroke();
-
-            // Subtotal
-            doc.text('Subtotal:', priceX - 50, totalsY, { width: 100, align: 'right' });
-            doc.text(`$${(invoice.subtotal || 0).toFixed(2)}`, totalX, totalsY);
-
-            // Tax
-            if (invoice.tax && invoice.tax > 0) {
-                doc.text('Tax:', priceX - 50, totalsY + 20, { width: 100, align: 'right' });
-                doc.text(`$${(invoice.tax || 0).toFixed(2)}`, totalX, totalsY + 20);
-            }
-
-            // Discount
-            if (invoice.discount && invoice.discount > 0) {
-                doc.text('Discount:', priceX - 50, totalsY + 40, { width: 100, align: 'right' });
-                doc.text(`-$${(invoice.discount || 0).toFixed(2)}`, totalX, totalsY + 40);
-            }
-
-            // Total Amount
-            const totalAmountY = totalsY + (invoice.tax && invoice.tax > 0 ? 40 : 20) + (invoice.discount && invoice.discount > 0 ? 20 : 0);
-            doc.moveTo(itemDescX, totalAmountY - 10)
-                .lineTo(totalX + 50, totalAmountY - 10)
-                .stroke();
-
-            doc.fontSize(12)
-                .font('Helvetica-Bold')
-                .fillColor('#000000')
-                .text('Total Amount:', priceX - 50, totalAmountY, { width: 100, align: 'right' });
-            doc.text(`$${(invoice.totalAmount || 0).toFixed(2)}`, totalX, totalAmountY);
-
-            // Payment Information
-            const paymentY = totalAmountY + 30;
-            doc.fontSize(10)
-                .font('Helvetica')
-                .fillColor('#000000')
-                .text(`Paid Amount: $${(invoice.paidAmount || 0).toFixed(2)}`, priceX - 50, paymentY, { width: 100, align: 'right' });
-            
-            const remainingBalance = (invoice.totalAmount || 0) - (invoice.paidAmount || 0);
-            doc.fontSize(11)
-                .font('Helvetica-Bold')
-                .fillColor(remainingBalance > 0 ? '#d32f2f' : '#4caf50')
-                .text(`Balance Due: $${remainingBalance.toFixed(2)}`, totalX, paymentY);
-
-            // Notes Section
-            if (invoice.notes) {
-                const notesY = paymentY + 40;
-                doc.fontSize(10)
-                    .font('Helvetica')
-                    .fillColor('#333333')
-                    .text('Notes:', 50, notesY);
-
-                doc.fontSize(9)
-                    .fillColor('#666666')
-                    .text(invoice.notes, 50, notesY + 20, { width: 500 });
-            }
-
-            // Status
-            const statusY = doc.page.height - 100;
-            doc.fontSize(10)
-                .fillColor('#666666')
-                .text(`Status: ${invoice.status?.toUpperCase() || 'DRAFT'}`, 50, statusY);
-
-            // Footer
-            doc.fontSize(8)
-                .fillColor('#999999')
-                .text(
-                    `Generated on ${new Date().toLocaleString()}`,
-                    50,
-                    doc.page.height - 50,
-                    { align: 'center', width: 500 }
-                );
+            renderDocument(doc, {
+                title: 'INVOICE',
+                numberLabel: 'Invoice #',
+                numberValue: invoice.invoiceNumber || 'N/A',
+                dateLabel: 'Invoice date',
+                dateValue: formatDate(invoice.createdAt || Date.now()),
+                dueLabel: 'Due date',
+                dueValue: formatDate(invoice.dueDate),
+                client: invoice.client,
+                projectTitle: invoice.projectTitle,
+                quotationNumber: invoice.quotation?.quotationNumber,
+                items: invoice.items || [],
+                subtotal: Number(invoice.subtotal || 0),
+                tax: Number(invoice.tax || 0),
+                discount: Number(invoice.discount || 0),
+                total: Number(invoice.totalAmount || 0),
+                notes: invoice.notes
+            });
 
             doc.end();
 
@@ -415,4 +391,3 @@ export const generateInvoicePDF = async (invoice: any): Promise<Buffer> => {
         }
     });
 };
-

@@ -1,25 +1,17 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import { errorHandler } from "../../middleware/errorHandler";
 
 
-// Create email transporter
-const createTransporter = () => {
+// Initialize SendGrid with API Key
+const initializeSendGrid = () => {
 
-    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-
-        throw errorHandler(500, "Email configuration is missing. Please check SMTP environment variables.");
-
+    if (!process.env.SMTP_PASS) {
+        throw errorHandler(500, "SendGrid API Key is missing. Please check the SMTP_PASS environment variable.")
     }
 
-    return nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-        }
-    });
+    sgMail.setApiKey(process.env.SMTP_PASS)
 
-};
+}
 
 
 // Send OTP email
@@ -33,10 +25,10 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
 
     try {
 
-        const transporter = createTransporter();
+        initializeSendGrid();
 
         const mailOptions = {
-            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Verify Your Account - OTP Code",
             html: `
@@ -71,17 +63,9 @@ export const sendOTPEmail = async (email: string, otp: string, name: string = "U
             `
         };
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.log(error);
-                    reject(errorHandler(500, `Failed to send OTP email: ${error.message}`));
-                } else {
-                    console.log("Email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
 
@@ -105,12 +89,12 @@ export const sendPasswordResetEmail = async (email: string, resetToken: string, 
 
     try {
 
-        const transporter = createTransporter();
+        initializeSendGrid();
 
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
         const mailOptions = {
-            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Reset Your Password - SIRE Tech",
             html: `
@@ -156,17 +140,9 @@ export const sendPasswordResetEmail = async (email: string, resetToken: string, 
             `
         };
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.log(error);
-                    reject(errorHandler(500, `Failed to send password reset email: ${error.message}`));
-                } else {
-                    console.log("Email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
 
@@ -190,10 +166,10 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
 
     try {
 
-        const transporter = createTransporter();
+        initializeSendGrid();
 
         const mailOptions = {
-            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
             to: email,
             subject: "Welcome to SIRE Tech! 🎉",
             html: `
@@ -234,17 +210,9 @@ export const sendWelcomeEmail = async (email: string, name: string) => {
             `
         };
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.log(error);
-                    reject(errorHandler(500, `Failed to send welcome email: ${error.message}`));
-                } else {
-                    console.log("Email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
 
@@ -263,7 +231,7 @@ export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: 
     }
 
     try {
-        const transporter = createTransporter();
+        initializeSendGrid();
         const clientName = quotation.client 
             ? `${quotation.client.firstName || ''} ${quotation.client.lastName || ''}`.trim() || 'Client'
             : 'Client';
@@ -274,7 +242,7 @@ export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: 
         const totalAmount = quotation.totalAmount || 0;
 
         const mailOptions: any = {
-            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech <${process.env.SMTP_FROM}>`,
             to: email,
             subject: `Quotation ${quotationNumber} - SIRE Tech`,
             html: `
@@ -332,23 +300,16 @@ export const sendQuotationEmail = async (email: string, quotation: any, pdfUrl: 
             mailOptions.attachments = [
                 {
                     filename: `quotation-${quotationNumber}.pdf`,
-                    content: pdfBuffer,
-                    contentType: 'application/pdf'
+                    content: pdfBuffer.toString('base64'),
+                    type: 'application/pdf',
+                    disposition: 'attachment'
                 }
             ];
         }
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.error('Error sending quotation email:', error);
-                    reject(errorHandler(500, `Failed to send quotation email: ${error.message}`));
-                } else {
-                    console.log("Quotation email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Quotation email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
         console.error('Error sending quotation email:', error);
@@ -362,7 +323,7 @@ export const sendInvoiceEmail = async (email: string, invoice: any, pdfUrl: stri
     }
 
     try {
-        const transporter = createTransporter();
+        initializeSendGrid();
         const clientName = invoice.client 
             ? `${invoice.client.firstName || ''} ${invoice.client.lastName || ''}`.trim() || 'Client'
             : 'Client';
@@ -375,7 +336,7 @@ export const sendInvoiceEmail = async (email: string, invoice: any, pdfUrl: stri
         const balanceDue = totalAmount - paidAmount;
 
         const mailOptions: any = {
-            from: `"SIRE Tech" <${process.env.SMTP_USER}>`,
+            from: `"SIRE Tech" <${process.env.SMTP_FROM}>`,
             to: email,
             subject: `Invoice ${invoiceNumber} - SIRE Tech`,
             html: `
@@ -435,23 +396,16 @@ export const sendInvoiceEmail = async (email: string, invoice: any, pdfUrl: stri
             mailOptions.attachments = [
                 {
                     filename: `invoice-${invoiceNumber}.pdf`,
-                    content: pdfBuffer,
-                    contentType: 'application/pdf'
+                    content: pdfBuffer.toString('base64'),
+                    type: 'application/pdf',
+                    disposition: 'attachment'
                 }
             ];
         }
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.error('Error sending invoice email:', error);
-                    reject(errorHandler(500, `Failed to send invoice email: ${error.message}`));
-                } else {
-                    console.log("Invoice email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Invoice email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
         console.error('Error sending invoice email:', error);
@@ -466,11 +420,11 @@ export const sendContactFormNotification = async (email: string, name: string, s
     }
 
     try {
-        const transporter = createTransporter();
+        initializeSendGrid();
         const adminEmail = process.env.FROM_EMAIL || process.env.SMTP_USER || 'admin@siretech.com';
 
         const mailOptions = {
-            from: `"SIRE Tech Contact Form" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech Contact Form <${process.env.SMTP_FROM}>`,
             to: adminEmail,
             subject: `New Contact Form Submission: ${subject}`,
             html: `
@@ -507,17 +461,9 @@ export const sendContactFormNotification = async (email: string, name: string, s
             `
         };
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.error('Error sending contact form notification:', error);
-                    reject(errorHandler(500, `Failed to send contact form notification: ${error.message}`));
-                } else {
-                    console.log("Contact form notification sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Contact form notification sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
         console.error('Error sending contact form notification:', error);
@@ -532,10 +478,10 @@ export const sendContactReplyEmail = async (email: string, name: string, subject
     }
 
     try {
-        const transporter = createTransporter();
+        initializeSendGrid();
 
         const mailOptions = {
-            from: `"SIRE Tech Support" <${process.env.SMTP_USER}>`,
+            from: `SIRE Tech Support <${process.env.SMTP_FROM}>`,
             to: email,
             subject: `Re: ${subject}`,
             html: `
@@ -575,21 +521,12 @@ export const sendContactReplyEmail = async (email: string, name: string, subject
             `
         };
 
-        return new Promise((resolve, reject) => {
-            transporter.sendMail(mailOptions, (error: any, info: any) => {
-                if (error) {
-                    console.error('Error sending contact reply email:', error);
-                    reject(errorHandler(500, `Failed to send contact reply email: ${error.message}`));
-                } else {
-                    console.log("Contact reply email sent: " + info.response);
-                    resolve({ success: true, messageId: info.messageId });
-                }
-            });
-        });
+        const response = await sgMail.send(mailOptions);
+        console.log("Contact reply email sent successfully");
+        return { success: true, messageId: response[0].headers['x-message-id'] };
 
     } catch (error: any) {
         console.error('Error sending contact reply email:', error);
         throw errorHandler(500, `Failed to send contact reply email: ${error.message}`);
     }
 };
-
